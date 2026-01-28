@@ -44,7 +44,7 @@ const auth = async (req, res, next) => {
   }
 };
 
-const role = (roles) => {
+const requireRole = (roles) => {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({
@@ -64,4 +64,4 @@ const role = (roles) => {
   };
 };
 
-module.exports = { auth, role };
+module.exports = { auth, requireRole };
