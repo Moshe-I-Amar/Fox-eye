@@ -164,7 +164,7 @@ const MapComponent = ({
             draw={{
               polygon: {
                 allowIntersection: false,
-                showArea: true,
+                showArea: false,
                 shapeOptions: {
                   color: DEFAULT_AO_COLOR,
                   weight: 2,
