@@ -1,6 +1,14 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
+const OPERATIONAL_ROLES = [
+  'SQUAD_COMMANDER',
+  'TEAM_COMMANDER',
+  'COMPANY_COMMANDER',
+  'UNIT_COMMANDER',
+  'HQ'
+];
+
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -26,6 +34,11 @@ const userSchema = new mongoose.Schema({
     type: String,
     enum: ['admin', 'user'],
     default: 'user'
+  },
+  operationalRole: {
+    type: String,
+    enum: OPERATIONAL_ROLES,
+    default: 'SQUAD_COMMANDER'
   },
   unitId: {
     type: mongoose.Schema.Types.ObjectId,
