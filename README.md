@@ -89,10 +89,21 @@ npm run dev
 All Socket.io connections require JWT authentication using the same tokens as REST APIs. The connection is automatically established when users log in.
 
 ### Live Location Updates
-- User location changes are instantly broadcast to all connected clients
+- User location changes are instantly broadcast to subscribed clients
 - Map markers update in real-time without page refresh
 - Distance calculations refresh automatically
 - Online/offline indicators show user presence
+
+### Viewport Subscriptions and Grid Rooms
+- Clients send `viewport:subscribe` with a bounding box and zoom on map move/zoom (debounced)
+- The server stores per-socket viewport state and only emits updates when a user is inside that viewport
+- Subscriptions are also mapped to grid rooms to reduce broadcast fan-out
+- Rooms are based on rounded lat/lng cells; the viewport check is still applied to prevent false positives
+
+Limitations:
+- Grid cells use coarse, zoom-based sizes and can be truncated if a viewport spans too many cells
+- Large, low-zoom viewports may receive fewer updates until the user zooms in
+- Dateline-wrapping viewports are normalized (no multi-range support)
 
 ### Admin Monitoring
 - Admin users receive all location updates system-wide
@@ -101,9 +112,10 @@ All Socket.io connections require JWT authentication using the same tokens as RE
 - Instant notifications for user joins/leaves
 
 ### Socket Events
-- `location:update` - Update user location (broadcasts to all)
+- `location:update` - Update user location (broadcasts to viewport subscribers)
 - `location:request` - Request nearby users with radius filtering
 - `presence:subscribe` - Subscribe to user presence updates
+- `viewport:subscribe` - Subscribe to viewport updates with bounds + zoom
 - `location:updated` - Receive real-time location changes
 - `presence:user_joined/left` - User join/leave notifications
 

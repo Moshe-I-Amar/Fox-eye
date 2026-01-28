@@ -121,6 +121,10 @@ class SocketClient {
     this.send('presence:subscribe');
   }
 
+  subscribeToViewport(viewport) {
+    this.send('viewport:subscribe', viewport);
+  }
+
   isSocketConnected() {
     return this.isConnected && this.socket?.connected;
   }

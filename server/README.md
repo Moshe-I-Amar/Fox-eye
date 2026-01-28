@@ -112,6 +112,7 @@ getIO().emit('user:updated', { userId: '123' });
 - **`location:update`** - Update user location (requires coordinates)
 - **`location:request`** - Request nearby users (requires center, radius, excludeSelf)
 - **`presence:subscribe`** - Subscribe to user presence updates
+- **`viewport:subscribe`** - Subscribe to viewport updates (bounds + zoom)
 - **`location:updated`** - Receive location updates from other users
 - **`location:updated:confirm`** - Confirmation of your own location update
 - **`location:response`** - Response to location request

@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import { Icon } from 'leaflet';
 import { userService } from '../services/usersApi';
 import socketClient from '../realtime/socketClient';
@@ -19,7 +19,56 @@ const MapController = ({ center }) => {
   return null;
 };
 
-const MapComponent = ({ center, users, userLocation, onUserClick }) => {
+const MapViewportSubscriber = ({ onViewportChange, debounceMs = 250 }) => {
+  const map = useMap();
+  const debounceRef = useRef(null);
+
+  const emitViewport = useCallback(() => {
+    if (!onViewportChange) {
+      return;
+    }
+    const bounds = map.getBounds();
+    const northEast = bounds.getNorthEast();
+    const southWest = bounds.getSouthWest();
+    onViewportChange({
+      minLat: southWest.lat,
+      minLng: southWest.lng,
+      maxLat: northEast.lat,
+      maxLng: northEast.lng,
+      zoom: map.getZoom()
+    });
+  }, [map, onViewportChange]);
+
+  const scheduleViewport = useCallback(() => {
+    if (!onViewportChange) {
+      return;
+    }
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    debounceRef.current = setTimeout(() => {
+      emitViewport();
+    }, debounceMs);
+  }, [debounceMs, emitViewport, onViewportChange]);
+
+  useMapEvents({
+    move: scheduleViewport,
+    zoom: scheduleViewport
+  });
+
+  useEffect(() => {
+    scheduleViewport();
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, [scheduleViewport]);
+
+  return null;
+};
+
+const MapComponent = ({ center, users, userLocation, onUserClick, onViewportChange }) => {
   const customIcon = new Icon({
     iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJDOCAxMyAyIDIwIDIgMjBDMiAyMCAxMiAyMCAyMCAyMEMyMCAyMCAxNiAxMyAxMiAyWiIgZmlsbD0iI0M3QTc2QyIvPgo8Y2lyY2xlIGN4PSIxMiIgY3k9IjEwIiByPSIzIiBmaWxsPSIjMEEwQTAwIi8+Cjwvc3ZnPg==',
     iconSize: [32, 32],
@@ -47,6 +96,7 @@ const MapComponent = ({ center, users, userLocation, onUserClick }) => {
       />
       
       <MapController center={center} />
+      <MapViewportSubscriber onViewportChange={onViewportChange} />
       
       {/* User's current location marker */}
       {userLocation && (
@@ -103,6 +153,7 @@ const Dashboard = () => {
   const [locationError, setLocationError] = useState('');
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
+  const [viewportBounds, setViewportBounds] = useState(null);
   const currentUser = authService.getCurrentUser();
   const currentUserId = currentUser?.id || currentUser?._id;
 
@@ -211,6 +262,16 @@ const Dashboard = () => {
       socketClient.off('error', handleSocketError);
     };
   }, [realtimeEnabled, mapCenter, radius, currentUserId]);
+
+  useEffect(() => {
+    if (!realtimeEnabled || !viewportBounds) {
+      return;
+    }
+    if (!socketClient.isSocketConnected()) {
+      return;
+    }
+    socketClient.subscribeToViewport(viewportBounds);
+  }, [realtimeEnabled, viewportBounds]);
 
   // Initial data fetch
   useEffect(() => {
@@ -321,6 +382,10 @@ const Dashboard = () => {
     setRadius(newRadius);
   };
 
+  const handleViewportChange = useCallback((viewport) => {
+    setViewportBounds(viewport);
+  }, []);
+
   return (
     <div className="min-h-screen">
       <Navbar />
@@ -429,6 +494,7 @@ const Dashboard = () => {
               users={users}
               userLocation={userLocation}
               onUserClick={setSelectedUser}
+              onViewportChange={handleViewportChange}
             />
           </Card>
         </div>

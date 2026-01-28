@@ -163,6 +163,14 @@ class SocketService {
     this.socket.emit('presence:subscribe');
   }
 
+  subscribeToViewport(viewport) {
+    if (!this.socket || !this.isConnected) {
+      throw new Error('Socket not connected');
+    }
+
+    this.socket.emit('viewport:subscribe', viewport);
+  }
+
   // Status
   isSocketConnected() {
     return this.isConnected && this.socket?.connected;

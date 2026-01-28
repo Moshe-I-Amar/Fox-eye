@@ -1,6 +1,14 @@
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const PresenceManager = require('../utils/presenceManager');
+const {
+  normalizeBounds,
+  getCellSizeForZoom,
+  getCellId,
+  getCellsForBounds,
+  isPointInBounds,
+  MAX_CELLS_PER_SUBSCRIPTION
+} = require('../utils/grid');
 
 class SocketService {
   constructor(io) {
@@ -8,6 +16,11 @@ class SocketService {
     this.presenceManager = new PresenceManager();
     this.userSockets = new Map(); // socket.id -> userInfo
     this.userProfiles = new Map(); // userId -> userInfo
+    this.socketViewports = new Map(); // socket.id -> viewport
+    this.socketViewportRooms = new Map(); // socket.id -> Set(room)
+    this.gridCellSizeCounts = new Map(); // cellSize -> count
+    this.lastViewportUpdateAt = new Map(); // socket.id -> timestamp
+    this.viewportThrottleMs = 250;
     this.setupEventHandlers();
   }
 
@@ -74,6 +87,15 @@ class SocketService {
           await this.handlePresenceSubscription(socket);
         } catch (error) {
           socket.emit('error', { message: 'Failed to subscribe to presence', details: error.message });
+        }
+      });
+
+      // Handle viewport subscription updates
+      socket.on('viewport:subscribe', async (data) => {
+        try {
+          await this.handleViewportSubscription(socket, data);
+        } catch (error) {
+          socket.emit('error', { message: 'Failed to subscribe to viewport', details: error.message });
         }
       });
 
@@ -153,14 +175,12 @@ class SocketService {
       updatedAt: user.updatedAt ? user.updatedAt.toISOString() : new Date().toISOString()
     };
 
-    socket.broadcast.emit('location:update', minimalUpdate);
+    await this.emitLocationUpdateToSubscribers({
+      minimalUpdate,
+      locationUpdate,
+      excludeSocketId: socket.id
+    });
 
-    // Emit to all clients in general room (except sender)
-    socket.broadcast.emit('location:updated', locationUpdate);
-    
-    // Emit to admin room
-    this.io.to('admin').emit('admin:location:updated', locationUpdate);
-    
     // Confirm to sender
     socket.emit('location:updated:confirm', {
       success: true,
@@ -249,6 +269,69 @@ class SocketService {
 
   }
 
+  async handleViewportSubscription(socket, data) {
+    const now = Date.now();
+    const lastUpdate = this.lastViewportUpdateAt.get(socket.id) || 0;
+    if (now - lastUpdate < this.viewportThrottleMs) {
+      return;
+    }
+    this.lastViewportUpdateAt.set(socket.id, now);
+
+    if (!data) {
+      throw new Error('Viewport payload is required');
+    }
+
+    const {
+      minLat,
+      minLng,
+      maxLat,
+      maxLng,
+      zoom
+    } = data;
+
+    if (![minLat, minLng, maxLat, maxLng].every((value) => Number.isFinite(value))) {
+      throw new Error('Viewport bounds must be numbers');
+    }
+
+    const normalized = normalizeBounds({ minLat, minLng, maxLat, maxLng });
+    const cellSize = getCellSizeForZoom(zoom);
+    const { cells, truncated } = getCellsForBounds(normalized, cellSize, MAX_CELLS_PER_SUBSCRIPTION);
+
+    if (truncated) {
+      console.warn(`Viewport subscription truncated for socket ${socket.id} (${cells.size} cells)`);
+    }
+
+    const previousViewport = this.socketViewports.get(socket.id);
+    if (previousViewport?.cellSize && previousViewport.cellSize !== cellSize) {
+      this.decrementCellSizeCount(previousViewport.cellSize);
+    }
+    if (!previousViewport?.cellSize || previousViewport.cellSize !== cellSize) {
+      this.incrementCellSizeCount(cellSize);
+    }
+
+    const nextRooms = cells;
+    const previousRooms = this.socketViewportRooms.get(socket.id) || new Set();
+
+    for (const room of previousRooms) {
+      if (!nextRooms.has(room)) {
+        socket.leave(room);
+      }
+    }
+
+    for (const room of nextRooms) {
+      if (!previousRooms.has(room)) {
+        socket.join(room);
+      }
+    }
+
+    this.socketViewportRooms.set(socket.id, nextRooms);
+    this.socketViewports.set(socket.id, {
+      ...normalized,
+      zoom,
+      cellSize
+    });
+  }
+
   handleDisconnect(socket) {
     // Remove from connection maps
     this.userSockets.delete(socket.id);
@@ -268,6 +351,89 @@ class SocketService {
         timestamp: new Date().toISOString()
       });
     }
+
+    const viewport = this.socketViewports.get(socket.id);
+    if (viewport?.cellSize) {
+      this.decrementCellSizeCount(viewport.cellSize);
+    }
+    this.socketViewports.delete(socket.id);
+    this.socketViewportRooms.delete(socket.id);
+    this.lastViewportUpdateAt.delete(socket.id);
+  }
+
+  incrementCellSizeCount(cellSize) {
+    const nextCount = (this.gridCellSizeCounts.get(cellSize) || 0) + 1;
+    this.gridCellSizeCounts.set(cellSize, nextCount);
+  }
+
+  decrementCellSizeCount(cellSize) {
+    const nextCount = (this.gridCellSizeCounts.get(cellSize) || 0) - 1;
+    if (nextCount <= 0) {
+      this.gridCellSizeCounts.delete(cellSize);
+    } else {
+      this.gridCellSizeCounts.set(cellSize, nextCount);
+    }
+  }
+
+  async emitLocationUpdateToSubscribers({ minimalUpdate, locationUpdate, excludeSocketId }) {
+    const [longitude, latitude] = minimalUpdate.coordinates;
+    const candidateSockets = new Map();
+
+    for (const cellSize of this.gridCellSizeCounts.keys()) {
+      const room = getCellId(latitude, longitude, cellSize);
+      const sockets = await this.io.in(room).fetchSockets();
+      for (const socket of sockets) {
+        candidateSockets.set(socket.id, socket);
+      }
+    }
+
+    for (const socket of candidateSockets.values()) {
+      if (excludeSocketId && socket.id === excludeSocketId) {
+        continue;
+      }
+      const viewport = this.socketViewports.get(socket.id);
+      if (!viewport) {
+        continue;
+      }
+      if (!isPointInBounds(viewport, latitude, longitude)) {
+        continue;
+      }
+      socket.emit('location:update', minimalUpdate);
+      socket.emit('location:updated', locationUpdate);
+    }
+
+    this.io.to('admin').emit('admin:location:updated', locationUpdate);
+  }
+
+  async broadcastLocationUpdate({ userId, name, email, role, coordinates, timestamp, updatedAt, excludeSocketId }) {
+    const locationUpdate = {
+      userId,
+      name,
+      email,
+      role,
+      location: {
+        type: 'Point',
+        coordinates
+      },
+      timestamp: timestamp || new Date().toISOString()
+    };
+
+    const minimalUpdate = {
+      userId,
+      coordinates,
+      updatedAt: updatedAt || new Date().toISOString()
+    };
+
+    const profile = this.userProfiles.get(userId);
+    if (profile) {
+      profile.location = locationUpdate.location;
+    }
+
+    await this.emitLocationUpdateToSubscribers({
+      minimalUpdate,
+      locationUpdate,
+      excludeSocketId
+    });
   }
 
   // Utility methods
