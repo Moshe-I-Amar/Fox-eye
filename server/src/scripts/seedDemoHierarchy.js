@@ -84,7 +84,7 @@ const seedDemoHierarchy = async () => {
 
     const unitCommander = await createUser({
       name: 'Unit Commander',
-      email: 'unit.commander@demo.local',
+      email: 'unit.commander@demo.com',
       password: DEMO_PASSWORD,
       role: 'admin',
       unitId: unit._id,
@@ -99,7 +99,7 @@ const seedDemoHierarchy = async () => {
       const [squad] = squadsByTeam[team._id.toString()];
       companyCommanders.push(await createUser({
         name: `${company.name} Commander`,
-        email: `${company.name.split(' ')[0].toLowerCase()}.company.commander@demo.local`,
+        email: `${company.name.split(' ')[0].toLowerCase()}.company.commander@demo.com`,
         password: DEMO_PASSWORD,
         role: 'user',
         unitId: unit._id,
@@ -114,7 +114,7 @@ const seedDemoHierarchy = async () => {
       const [squad] = squadsByTeam[team._id.toString()];
       teamCommanders.push(await createUser({
         name: `${team.name} Commander`,
-        email: `${team.name.replace(' ', '.').replace(' Team', '').toLowerCase()}.team.commander@demo.local`,
+        email: `${team.name.replace(' ', '.').replace(' Team', '').toLowerCase()}.team.commander@demo.com`,
         password: DEMO_PASSWORD,
         role: 'user',
         unitId: unit._id,
@@ -128,7 +128,7 @@ const seedDemoHierarchy = async () => {
     for (const squad of squads) {
       squadCommanders.push(await createUser({
         name: `${squad.name} Commander`,
-        email: `${squad.name.replace(' ', '.').replace(' Squad', '').toLowerCase()}.squad.commander@demo.local`,
+        email: `${squad.name.replace(' ', '.').replace(' Squad', '').toLowerCase()}.squad.commander@demo.com`,
         password: DEMO_PASSWORD,
         role: 'user',
         unitId: unit._id,
