@@ -20,6 +20,42 @@ const hasCompanyAccess = (user, companyId) => {
   return String(companyId) === String(user.companyId);
 };
 
+const listAOs = async (req, res) => {
+  try {
+    const isAdminUser = isAdmin(req.user);
+    const requestedCompanyId = req.query.companyId;
+    const companyId = isAdminUser ? requestedCompanyId : req.user?.companyId;
+
+    if (!isAdminUser && requestedCompanyId && String(requestedCompanyId) !== String(req.user?.companyId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Insufficient permissions.'
+      });
+    }
+
+    const query = {};
+    if (companyId) {
+      query.companyId = companyId;
+    }
+    if (req.query.active !== undefined) {
+      query.active = String(req.query.active) === 'true';
+    }
+
+    const aos = await AO.find(query).sort({ createdAt: -1 }).lean();
+
+    res.json({
+      success: true,
+      data: { aos }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error loading AOs',
+      details: error.message
+    });
+  }
+};
+
 const createAO = async (req, res) => {
   try {
     if (!isAdmin(req.user) && !isCompanyCommander(req.user)) {
@@ -208,6 +244,7 @@ const setAOActive = async (req, res) => {
 };
 
 module.exports = {
+  listAOs,
   createAO,
   updateAO,
   setAOActive

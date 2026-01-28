@@ -7,11 +7,13 @@ const {
   validateAOActive
 } = require('../utils/validators');
 const {
+  listAOs,
   createAO,
   updateAO,
   setAOActive
 } = require('../controllers/aoController');
 
+router.get('/', auth, listAOs);
 router.post('/', auth, validateAOCreate, createAO);
 router.put('/:id', auth, validateAOUpdate, updateAO);
 router.patch('/:id/active', auth, validateAOActive, setAOActive);

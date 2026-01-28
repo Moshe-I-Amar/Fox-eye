@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, FeatureGroup, Polygon } from 'react-leaflet';
+import { EditControl } from 'react-leaflet-draw';
 import { Icon } from 'leaflet';
 import { userService } from '../services/usersApi';
+import { aoService } from '../services/aoApi';
 import socketClient from '../realtime/socketClient';
 import { authService } from '../services/authApi';
 import Button from '../components/ui/Button';
@@ -69,7 +71,61 @@ const MapViewportSubscriber = ({ onViewportChange, debounceMs = 250 }) => {
   return null;
 };
 
-const MapComponent = ({ center, users, userLocation, onUserClick, liveUpdateIds, onViewportChange }) => {
+const DEFAULT_AO_COLOR = '#C7A76C';
+
+const toGeoPolygon = (latLngs) => {
+  if (!Array.isArray(latLngs) || latLngs.length === 0) {
+    return null;
+  }
+
+  const ring = Array.isArray(latLngs[0]) ? latLngs[0] : latLngs;
+  if (!Array.isArray(ring) || ring.length === 0) {
+    return null;
+  }
+
+  const coordinates = ring.map((point) => [point.lng, point.lat]);
+  if (coordinates.length > 2) {
+    const [firstLng, firstLat] = coordinates[0];
+    const [lastLng, lastLat] = coordinates[coordinates.length - 1];
+    if (firstLng !== lastLng || firstLat !== lastLat) {
+      coordinates.push([firstLng, firstLat]);
+    }
+  }
+
+  return {
+    type: 'Polygon',
+    coordinates: [coordinates]
+  };
+};
+
+const toLatLngs = (polygon) => {
+  if (!polygon?.coordinates?.[0]) {
+    return [];
+  }
+
+  return polygon.coordinates[0].map(([lng, lat]) => [lat, lng]);
+};
+
+const MapComponent = ({
+  center,
+  users,
+  userLocation,
+  onUserClick,
+  liveUpdateIds,
+  onViewportChange,
+  aos = [],
+  onAOCreate,
+  onAOEdit,
+  onAOSelect,
+  featureGroupRef,
+  canManageAOs = false
+}) => {
+  const bindAoLayer = (aoId) => (layer) => {
+    if (layer) {
+      layer.options.aoId = aoId;
+    }
+  };
+
   const customIcon = new Icon({
     iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJDOCAxMyAyIDIwIDIgMjBDMiAyMCAxMiAyMCAyMCAyMEMyMCAyMCAxNiAxMyAxMiAyWiIgZmlsbD0iI0M3QTc2QyIvPgo8Y2lyY2xlIGN4PSIxMiIgY3k9IjEwIiByPSIzIiBmaWxsPSIjMEEwQTAwIi8+Cjwvc3ZnPg==',
     iconSize: [32, 32],
@@ -98,6 +154,62 @@ const MapComponent = ({ center, users, userLocation, onUserClick, liveUpdateIds,
       
       <MapController center={center} />
       <MapViewportSubscriber onViewportChange={onViewportChange} />
+
+      <FeatureGroup ref={featureGroupRef}>
+        {canManageAOs && (
+          <EditControl
+            position="topright"
+            onCreated={onAOCreate}
+            onEdited={onAOEdit}
+            draw={{
+              polygon: {
+                allowIntersection: false,
+                showArea: true,
+                shapeOptions: {
+                  color: DEFAULT_AO_COLOR,
+                  weight: 2,
+                  fillOpacity: 0.2
+                }
+              },
+              polyline: false,
+              rectangle: false,
+              circle: false,
+              circlemarker: false,
+              marker: false
+            }}
+            edit={{
+              edit: true,
+              remove: false
+            }}
+          />
+        )}
+
+        {aos.map((ao) => (
+          <Polygon
+            key={ao._id}
+            positions={toLatLngs(ao.polygon)}
+            pathOptions={{
+              color: ao.style?.color || DEFAULT_AO_COLOR,
+              fillOpacity: ao.active ? 0.2 : 0.06,
+              weight: ao.active ? 2 : 1,
+              dashArray: ao.active ? null : '5,6'
+            }}
+            ref={bindAoLayer(ao._id)}
+            eventHandlers={{
+              click: () => onAOSelect?.(ao)
+            }}
+          >
+            <Popup>
+              <div className="text-jet">
+                <p className="font-semibold">{ao.name}</p>
+                <p className="text-xs text-gray-600">
+                  {ao.active ? 'Active' : 'Inactive'}
+                </p>
+              </div>
+            </Popup>
+          </Polygon>
+        ))}
+      </FeatureGroup>
       
       {/* User's current location marker */}
       {userLocation && (
@@ -167,8 +279,18 @@ const Dashboard = () => {
   const [liveUpdateIds, setLiveUpdateIds] = useState(new Set());
   const liveUpdateTimers = useRef(new Map());
   const [viewportBounds, setViewportBounds] = useState(null);
+  const [aos, setAos] = useState([]);
+  const [aoLoading, setAoLoading] = useState(false);
+  const [aoError, setAoError] = useState('');
+  const [aoDraft, setAoDraft] = useState(null);
+  const [aoModalMode, setAoModalMode] = useState('create');
+  const [aoForm, setAoForm] = useState({ name: '', color: DEFAULT_AO_COLOR });
+  const [selectedAO, setSelectedAO] = useState(null);
+  const [aoSaving, setAoSaving] = useState(false);
+  const featureGroupRef = useRef(null);
   const currentUser = authService.getCurrentUser();
   const currentUserId = currentUser?.id || currentUser?._id;
+  const canManageAOs = currentUser?.role === 'admin' || currentUser?.operationalRole === 'COMPANY_COMMANDER';
   const navigate = useNavigate();
 
   // Initialize socket connection
@@ -413,6 +535,7 @@ const Dashboard = () => {
     fetchNearbyUsers();
   }, [mapCenter, radius]);
 
+
   // Utility functions
   const calculateDistance = (center, userCoords) => {
     const [lat1, lon1] = center;
@@ -450,6 +573,184 @@ const Dashboard = () => {
       setLoading(false);
     }
   };
+
+  const fetchAOs = async () => {
+    try {
+      setAoLoading(true);
+      setAoError('');
+      const params = {};
+      if (currentUser?.role === 'admin' && currentUser?.companyId) {
+        params.companyId = currentUser.companyId;
+      }
+      const response = await aoService.getAOs(params);
+      setAos(response?.data?.aos || []);
+    } catch (error) {
+      console.error('Error fetching AOs:', error);
+      setAoError('Failed to load area overlays. Please try again.');
+    } finally {
+      setAoLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAOs();
+  }, []);
+
+  const clearDraftLayer = () => {
+    if (featureGroupRef.current && aoDraft?.layer) {
+      featureGroupRef.current.removeLayer(aoDraft.layer);
+    }
+  };
+
+  const handleAOCreate = (event) => {
+    if (!event?.layer) {
+      return;
+    }
+
+    const polygon = toGeoPolygon(event.layer.getLatLngs());
+    if (!polygon) {
+      return;
+    }
+
+    setAoDraft({
+      polygon,
+      layer: event.layer
+    });
+    setAoForm({ name: '', color: DEFAULT_AO_COLOR });
+    setAoModalMode('create');
+    setAoError('');
+  };
+
+  const handleAOEdit = async (event) => {
+    if (!event?.layers) {
+      return;
+    }
+
+    const updates = [];
+    event.layers.eachLayer((layer) => {
+      const aoId = layer?.options?.aoId;
+      const polygon = toGeoPolygon(layer.getLatLngs());
+      if (aoId && polygon) {
+        updates.push({ aoId, polygon });
+      }
+    });
+
+    if (!updates.length) {
+      return;
+    }
+
+    try {
+      setAoSaving(true);
+      await Promise.all(
+        updates.map((update) => aoService.updateAO(update.aoId, { polygon: update.polygon }))
+      );
+      setAos((prev) =>
+        prev.map((ao) => {
+          const update = updates.find((item) => item.aoId === ao._id);
+          return update ? { ...ao, polygon: update.polygon } : ao;
+        })
+      );
+    } catch (error) {
+      console.error('Error updating AO geometry:', error);
+      setAoError('Failed to update AO geometry. Please try again.');
+    } finally {
+      setAoSaving(false);
+    }
+  };
+
+  const handleAOSelect = (ao) => {
+    if (!canManageAOs) {
+      return;
+    }
+    setSelectedAO(ao);
+    setAoForm({
+      name: ao.name || '',
+      color: ao.style?.color || DEFAULT_AO_COLOR
+    });
+    setAoModalMode('edit');
+    setAoError('');
+  };
+
+  const handleAOCancel = () => {
+    clearDraftLayer();
+    setAoDraft(null);
+    setSelectedAO(null);
+    setAoForm({ name: '', color: DEFAULT_AO_COLOR });
+  };
+
+  const handleAOSubmit = async () => {
+    const trimmedName = aoForm.name.trim();
+    if (trimmedName.length < 2) {
+      setAoError('AO name must be at least 2 characters.');
+      return;
+    }
+
+    try {
+      setAoSaving(true);
+      setAoError('');
+
+      if (aoModalMode === 'create') {
+        if (!aoDraft?.polygon) {
+          return;
+        }
+
+        const payload = {
+          name: trimmedName,
+          polygon: aoDraft.polygon,
+          style: { color: aoForm.color }
+        };
+        if (currentUser?.role === 'admin' && currentUser?.companyId) {
+          payload.companyId = currentUser.companyId;
+        }
+
+        const response = await aoService.createAO(payload);
+        const createdAO = response?.data?.ao;
+        if (createdAO) {
+          setAos((prev) => [createdAO, ...prev]);
+        }
+        clearDraftLayer();
+        setAoDraft(null);
+      } else if (selectedAO) {
+        const response = await aoService.updateAO(selectedAO._id, {
+          name: trimmedName,
+          style: { color: aoForm.color }
+        });
+        const updatedAO = response?.data?.ao;
+        if (updatedAO) {
+          setAos((prev) => prev.map((ao) => (ao._id === updatedAO._id ? updatedAO : ao)));
+        } else {
+          setAos((prev) =>
+            prev.map((ao) =>
+              ao._id === selectedAO._id
+                ? { ...ao, name: trimmedName, style: { ...ao.style, color: aoForm.color } }
+                : ao
+            )
+          );
+        }
+        setSelectedAO(null);
+      }
+    } catch (error) {
+      console.error('Error saving AO:', error);
+      setAoError('Failed to save AO. Please try again.');
+    } finally {
+      setAoSaving(false);
+    }
+  };
+
+  const handleToggleAOActive = async (ao) => {
+    try {
+      const nextActive = !ao.active;
+      await aoService.setAOActive(ao._id, nextActive);
+      setAos((prev) =>
+        prev.map((item) => (item._id === ao._id ? { ...item, active: nextActive } : item))
+      );
+    } catch (error) {
+      console.error('Error updating AO status:', error);
+      setAoError('Failed to update AO status. Please try again.');
+    }
+  };
+
+  const isAoModalOpen = (aoModalMode === 'create' && !!aoDraft) || (aoModalMode === 'edit' && !!selectedAO);
 
   // Listen for socket location responses
   useEffect(() => {
@@ -604,6 +905,67 @@ const Dashboard = () => {
             </div>
           </Card>
 
+          {/* AO Controls */}
+          <Card className="mb-6" padding="small">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gold">Area Overlays</h3>
+                <span className="text-xs text-gold/60">{aos.length} saved</span>
+              </div>
+              <p className="text-xs text-gold/60">
+                {canManageAOs
+                  ? 'Use the polygon tool on the map to draw a new AO. Use the edit tool to reshape saved polygons.'
+                  : 'Viewing active overlays. Contact a commander to add or edit coverage.'}
+              </p>
+              {aoError && (
+                <p className="text-xs text-red-400">{aoError}</p>
+              )}
+              <div className="space-y-2 max-h-40 overflow-y-auto scrollbar-thin">
+                {aoLoading ? (
+                  <div className="text-xs text-gold/50">Loading overlays...</div>
+                ) : aos.length === 0 ? (
+                  <div className="text-xs text-gold/50">No overlays yet. Draw one on the map.</div>
+                ) : (
+                  aos.map((ao) => (
+                    <div
+                      key={ao._id}
+                      className="flex items-center justify-between rounded-lg border border-gold/10 px-3 py-2"
+                    >
+                      <div className="flex items-center space-x-2 min-w-0">
+                        <span
+                          className="h-2.5 w-2.5 rounded-full"
+                          style={{ backgroundColor: ao.style?.color || DEFAULT_AO_COLOR }}
+                        />
+                        <div className="min-w-0">
+                          <p className="text-sm text-gold truncate">{ao.name}</p>
+                          <p className="text-[11px] text-gold/50">
+                            {ao.active ? 'Active' : 'Inactive'}
+                          </p>
+                        </div>
+                      </div>
+                      {canManageAOs && (
+                        <div className="flex items-center space-x-2">
+                          <button
+                            className="text-xs text-gold/70 hover:text-gold"
+                            onClick={() => handleAOSelect(ao)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="text-xs text-gold/70 hover:text-gold"
+                            onClick={() => handleToggleAOActive(ao)}
+                          >
+                            {ao.active ? 'Disable' : 'Enable'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </Card>
+
           {/* User List */}
           <div className="flex-1 overflow-y-auto scrollbar-thin space-y-3">
             {loading ? (
@@ -662,10 +1024,53 @@ const Dashboard = () => {
               onUserClick={setSelectedUser}
               liveUpdateIds={liveUpdateIds}
               onViewportChange={handleViewportChange}
+              aos={aos}
+              onAOCreate={handleAOCreate}
+              onAOEdit={handleAOEdit}
+              onAOSelect={handleAOSelect}
+              featureGroupRef={featureGroupRef}
+              canManageAOs={canManageAOs}
             />
           </Card>
         </div>
       </div>
+
+      <Modal
+        isOpen={isAoModalOpen}
+        onClose={handleAOCancel}
+        title={aoModalMode === 'create' ? 'Save Area Overlay' : 'Edit Area Overlay'}
+        size="small"
+      >
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm text-gold">AO Name</label>
+            <input
+              className="dark-input w-full"
+              type="text"
+              placeholder="e.g. North Sector"
+              value={aoForm.name}
+              onChange={(event) => setAoForm((prev) => ({ ...prev, name: event.target.value }))}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-gold">Overlay Color</label>
+            <input
+              type="color"
+              value={aoForm.color}
+              onChange={(event) => setAoForm((prev) => ({ ...prev, color: event.target.value }))}
+              className="h-10 w-20 rounded border border-gold/30 bg-transparent"
+            />
+          </div>
+          <div className="flex items-center justify-end space-x-2">
+            <Button variant="ghost" onClick={handleAOCancel}>
+              Cancel
+            </Button>
+            <Button onClick={handleAOSubmit} disabled={aoSaving}>
+              {aoSaving ? 'Saving...' : 'Save'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* User Details Modal */}
       <Modal
