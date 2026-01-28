@@ -103,6 +103,11 @@ body {
   color: #C7A76C !important;
 }
 
+.marker-live-update {
+  animation: markerGlow 1.4s ease-out 1;
+  filter: drop-shadow(0 0 10px rgba(199, 167, 108, 0.7));
+}
+
 .loading-skeleton {
   background: linear-gradient(90deg, rgba(199, 167, 108, 0.1) 25%, rgba(199, 167, 108, 0.2) 50%, rgba(199, 167, 108, 0.1) 75%);
   background-size: 200% 100%;
@@ -112,6 +117,18 @@ body {
 @keyframes loading {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+
+@keyframes markerGlow {
+  0% {
+    filter: drop-shadow(0 0 0 rgba(199, 167, 108, 0));
+  }
+  50% {
+    filter: drop-shadow(0 0 12px rgba(199, 167, 108, 0.8));
+  }
+  100% {
+    filter: drop-shadow(0 0 0 rgba(199, 167, 108, 0));
+  }
 }
 
 .scrollbar-thin::-webkit-scrollbar {

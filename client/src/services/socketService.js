@@ -31,6 +31,7 @@ class SocketService {
         this.socket.on('connect', () => {
           console.log('Socket connected successfully');
           this.isConnected = true;
+          this.emit('connect', { socketId: this.socket.id });
           resolve(this.socket);
         });
 
@@ -48,12 +49,17 @@ class SocketService {
         this.socket.on('connect_error', (error) => {
           console.error('Socket connection error:', error);
           this.isConnected = false;
+          this.emit('connect_error', error);
           reject(error);
         });
 
         this.socket.on('error', (error) => {
           console.error('Socket error:', error);
           this.emit('error', error);
+        });
+
+        this.socket.on('reconnect_attempt', (attempt) => {
+          this.emit('reconnecting', { attempt });
         });
 
         // Location events

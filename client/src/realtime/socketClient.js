@@ -38,11 +38,16 @@ class SocketClient {
 
       this.socket.on('connect_error', (error) => {
         this.isConnected = false;
+        this.emit('connect_error', error);
         reject(error);
       });
 
       this.socket.on('error', (error) => {
         this.emit('error', error);
+      });
+
+      this.socket.on('reconnect_attempt', (attempt) => {
+        this.emit('reconnecting', { attempt });
       });
 
       this.socket.on('location:update', (data) => {

@@ -68,7 +68,7 @@ const MapViewportSubscriber = ({ onViewportChange, debounceMs = 250 }) => {
   return null;
 };
 
-const MapComponent = ({ center, users, userLocation, onUserClick, onViewportChange }) => {
+const MapComponent = ({ center, users, userLocation, onUserClick, liveUpdateIds, onViewportChange }) => {
   const customIcon = new Icon({
     iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJDOCAxMyAyIDIwIDIgMjBDMiAyMCAxMiAyMCAyMCAyMEMyMCAyMCAxNiAxMyAxMiAyWiIgZmlsbD0iI0M3QTc2QyIvPgo8Y2lyY2xlIGN4PSIxMiIgY3k9IjEwIiByPSIzIiBmaWxsPSIjMEEwQTAwIi8+Cjwvc3ZnPg==',
     iconSize: [32, 32],
@@ -119,7 +119,14 @@ const MapComponent = ({ center, users, userLocation, onUserClick, onViewportChan
         <Marker
           key={user._id}
           position={[user.location.coordinates[1], user.location.coordinates[0]]}
-          icon={customIcon}
+          icon={
+            liveUpdateIds.has(user._id)
+              ? new Icon({
+                  ...customIcon.options,
+                  className: 'marker-live-update'
+                })
+              : customIcon
+          }
           eventHandlers={{
             click: () => onUserClick(user)
           }}
@@ -153,6 +160,9 @@ const Dashboard = () => {
   const [locationError, setLocationError] = useState('');
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState('offline');
+  const [liveUpdateIds, setLiveUpdateIds] = useState(new Set());
+  const liveUpdateTimers = useRef(new Map());
   const [viewportBounds, setViewportBounds] = useState(null);
   const currentUser = authService.getCurrentUser();
   const currentUserId = currentUser?.id || currentUser?._id;
@@ -165,6 +175,7 @@ const Dashboard = () => {
         try {
           await socketClient.connect(token);
           setRealtimeEnabled(true);
+          setRealtimeStatus('connected');
           
           // Subscribe to presence updates
           socketClient.subscribeToPresence();
@@ -173,6 +184,7 @@ const Dashboard = () => {
         } catch (error) {
           console.error('Failed to connect socket:', error);
           setRealtimeEnabled(false);
+          setRealtimeStatus('offline');
         }
       }
     };
@@ -183,6 +195,62 @@ const Dashboard = () => {
       socketClient.disconnect();
     };
   }, []);
+
+  useEffect(() => {
+    const handleConnect = () => {
+      setRealtimeStatus('connected');
+    };
+
+    const handleDisconnect = () => {
+      setRealtimeStatus('reconnecting');
+    };
+
+    const handleReconnect = () => {
+      setRealtimeStatus('reconnecting');
+    };
+
+    socketClient.on('connect', handleConnect);
+    socketClient.on('disconnect', handleDisconnect);
+    socketClient.on('reconnecting', handleReconnect);
+    socketClient.on('connect_error', handleDisconnect);
+
+    return () => {
+      socketClient.off('connect', handleConnect);
+      socketClient.off('disconnect', handleDisconnect);
+      socketClient.off('reconnecting', handleReconnect);
+      socketClient.off('connect_error', handleDisconnect);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      liveUpdateTimers.current.forEach((timer) => clearTimeout(timer));
+      liveUpdateTimers.current.clear();
+    };
+  }, []);
+
+  const markLiveUpdate = (userId) => {
+    setLiveUpdateIds((prev) => {
+      const next = new Set(prev);
+      next.add(userId);
+      return next;
+    });
+
+    if (liveUpdateTimers.current.has(userId)) {
+      clearTimeout(liveUpdateTimers.current.get(userId));
+    }
+
+    const timeoutId = setTimeout(() => {
+      setLiveUpdateIds((prev) => {
+        const next = new Set(prev);
+        next.delete(userId);
+        return next;
+      });
+      liveUpdateTimers.current.delete(userId);
+    }, 1600);
+
+    liveUpdateTimers.current.set(userId, timeoutId);
+  };
 
   // Setup socket event listeners
   useEffect(() => {
@@ -222,6 +290,7 @@ const Dashboard = () => {
         type: 'Point',
         coordinates: [longitude, latitude]
       };
+      const updateTimestamp = data.timestamp || new Date().toISOString();
 
       // Update users list if the updated user is in our current view
       setUsers(prevUsers => {
@@ -234,18 +303,38 @@ const Dashboard = () => {
             distance: calculateDistance(
               mapCenter,
               [latitude, longitude]
-            )
+            ),
+            lastUpdateAt: updateTimestamp
           };
           return updatedUsers;
         }
         return prevUsers;
       });
 
+      setSelectedUser(prev => (
+        prev && prev._id === data.userId
+          ? {
+              ...prev,
+              location: nextLocation,
+              distance: calculateDistance(mapCenter, [latitude, longitude]),
+              lastUpdateAt: updateTimestamp
+            }
+          : prev
+      ));
+
+      markLiveUpdate(data.userId);
       setOnlineUsers(prev => new Set([...prev, data.userId]));
     };
 
     const handlePresenceUpdate = (data) => {
       applyPresenceUpdate(data);
+      if (data?.userId) {
+        setSelectedUser(prev => (
+          prev && prev._id === data.userId
+            ? { ...prev, isOnline: data.online, lastSeen: data.lastSeen }
+            : prev
+        ));
+      }
     };
 
     const handleSocketError = (error) => {
@@ -257,10 +346,10 @@ const Dashboard = () => {
     socketClient.on('error', handleSocketError);
 
     return () => {
-      socketClient.off('location:update', handleLocationUpdate);
-      socketClient.off('presence:update', handlePresenceUpdate);
-      socketClient.off('error', handleSocketError);
-    };
+    socketClient.off('location:update', handleLocationUpdate);
+    socketClient.off('presence:update', handlePresenceUpdate);
+    socketClient.off('error', handleSocketError);
+  };
   }, [realtimeEnabled, mapCenter, radius, currentUserId]);
 
   useEffect(() => {
@@ -304,7 +393,10 @@ const Dashboard = () => {
         socketClient.requestLocation(mapCenter, radius, true);
       } else {
         const response = await userService.getUsersNearby(mapCenter[0], mapCenter[1], radius);
-        setUsers(response.data.users);
+        setUsers(response.data.users.map(user => ({
+          ...user,
+          lastUpdateAt: user.lastUpdateAt || user.lastSeen || user.updatedAt
+        })));
       }
     } catch (error) {
       console.error('Error fetching nearby users:', error);
@@ -321,7 +413,8 @@ const Dashboard = () => {
       console.log('Received location response:', data);
       setUsers(data.users.map(user => ({
         ...user,
-        isOnline: onlineUsers.has(user._id)
+        isOnline: onlineUsers.has(user._id),
+        lastUpdateAt: user.lastUpdateAt || user.lastSeen || user.updatedAt
       })));
       setLoading(false);
     };
@@ -382,13 +475,26 @@ const Dashboard = () => {
     setRadius(newRadius);
   };
 
+  const formatTimestamp = (value) => {
+    if (!value) return 'No live updates yet';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Unavailable';
+    return date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  };
+
   const handleViewportChange = useCallback((viewport) => {
     setViewportBounds(viewport);
   }, []);
 
   return (
     <div className="min-h-screen">
-      <Navbar />
+      <Navbar realtimeStatus={realtimeStatus} />
       
       <div className="flex h-[calc(100vh-80px)]">
         {/* Left Panel - User List */}
@@ -494,6 +600,7 @@ const Dashboard = () => {
               users={users}
               userLocation={userLocation}
               onUserClick={setSelectedUser}
+              liveUpdateIds={liveUpdateIds}
               onViewportChange={handleViewportChange}
             />
           </Card>
@@ -535,6 +642,13 @@ const Dashboard = () => {
               </p>
               <p className="text-gold text-sm">
                 Lng: {selectedUser.location.coordinates[0].toFixed(6)}
+              </p>
+            </div>
+
+            <div className="glass-card rounded-lg p-3">
+              <p className="text-gold/60 text-sm mb-2">Last Update</p>
+              <p className="text-gold text-sm">
+                {formatTimestamp(selectedUser.lastUpdateAt || selectedUser.lastSeen || selectedUser.updatedAt)}
               </p>
             </div>
           </div>

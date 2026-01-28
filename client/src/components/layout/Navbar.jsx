@@ -3,7 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../../services/authApi';
 import Button from '../ui/Button';
 
-const Navbar = () => {
+const Navbar = ({ realtimeStatus = 'offline' }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const user = authService.getCurrentUser();
@@ -16,6 +16,9 @@ const Navbar = () => {
   const isAuthPage = ['/login', '/register'].includes(location.pathname);
 
   if (isAuthPage) return null;
+
+  const showLive = realtimeStatus === 'connected';
+  const showReconnecting = realtimeStatus === 'reconnecting';
 
   return (
     <nav className="glass-card border-b border-gold/20 px-6 py-4">
@@ -31,6 +34,22 @@ const Navbar = () => {
         </Link>
 
         <div className="flex items-center space-x-4">
+          {(showLive || showReconnecting) && (
+            <div
+              className={`flex items-center space-x-2 rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] ${
+                showLive
+                  ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300 shadow-[0_0_12px_rgba(52,211,153,0.25)]'
+                  : 'border-gold/40 bg-gold/10 text-gold/70'
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  showLive ? 'bg-emerald-400' : 'bg-gold/70 animate-pulse'
+                }`}
+              />
+              <span>{showLive ? 'LIVE' : 'Reconnecting...'}</span>
+            </div>
+          )}
           {user && (
             <>
               <span className="text-gold/80">

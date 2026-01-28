@@ -20,6 +20,7 @@ const Admin = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
+  const [realtimeStatus, setRealtimeStatus] = useState('offline');
 
   // Initialize socket for admin features
   useEffect(() => {
@@ -31,6 +32,7 @@ const Admin = () => {
         try {
           await socketService.connect(token);
           setRealtimeEnabled(true);
+          setRealtimeStatus('connected');
           
           // Subscribe to presence updates
           socketService.subscribeToPresence();
@@ -39,6 +41,7 @@ const Admin = () => {
         } catch (error) {
           console.error('Failed to connect admin socket:', error);
           setRealtimeEnabled(false);
+          setRealtimeStatus('offline');
         }
       }
     };
@@ -47,6 +50,24 @@ const Admin = () => {
 
     return () => {
       socketService.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleConnect = () => setRealtimeStatus('connected');
+    const handleDisconnect = () => setRealtimeStatus('reconnecting');
+    const handleReconnect = () => setRealtimeStatus('reconnecting');
+
+    socketService.on('connect', handleConnect);
+    socketService.on('disconnected', handleDisconnect);
+    socketService.on('reconnecting', handleReconnect);
+    socketService.on('connect_error', handleDisconnect);
+
+    return () => {
+      socketService.off('connect', handleConnect);
+      socketService.off('disconnected', handleDisconnect);
+      socketService.off('reconnecting', handleReconnect);
+      socketService.off('connect_error', handleDisconnect);
     };
   }, []);
 
@@ -61,10 +82,16 @@ const Admin = () => {
       setUsers(prevUsers => 
         prevUsers.map(user => 
           user._id === data.userId 
-            ? { ...user, location: data.location, lastSeen: data.timestamp }
+            ? { ...user, location: data.location, lastSeen: data.timestamp, lastUpdateAt: data.timestamp }
             : user
         )
       );
+
+      setSelectedUser(prev => (
+        prev && prev._id === data.userId
+          ? { ...prev, location: data.location, lastSeen: data.timestamp, lastUpdateAt: data.timestamp }
+          : prev
+      ));
     };
 
     const handleUserJoined = (data) => {
@@ -83,7 +110,7 @@ const Admin = () => {
       setUsers(prevUsers =>
         prevUsers.map(user =>
           user._id === data.userId
-            ? { ...user, online: data.online, lastSeen: data.lastSeen }
+            ? { ...user, online: data.online, lastSeen: data.lastSeen, lastUpdateAt: data.lastSeen }
             : user
         )
       );
@@ -96,6 +123,12 @@ const Admin = () => {
         }
         return next;
       });
+
+      setSelectedUser(prev =>
+        prev && prev._id === data.userId
+          ? { ...prev, online: data.online, lastSeen: data.lastSeen, lastUpdateAt: data.lastSeen }
+          : prev
+      );
     };
 
     socketService.on('admin:location:updated', handleAdminLocationUpdate);
@@ -119,7 +152,10 @@ const Admin = () => {
     try {
       setLoading(true);
       const response = await userService.getAllUsers(pagination.page, pagination.limit);
-      setUsers(response.data.users);
+      setUsers(response.data.users.map(user => ({
+        ...user,
+        lastUpdateAt: user.lastUpdateAt || user.lastSeen || user.updatedAt
+      })));
       setPagination(prev => ({
         ...prev,
         ...response.data.pagination
@@ -139,6 +175,19 @@ const Admin = () => {
     setSelectedUser(user);
   };
 
+  const formatTimestamp = (value) => {
+    if (!value) return 'No live updates yet';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Unavailable';
+    return date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  };
+
   const filteredUsers = users.filter(user =>
     user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     user.email.toLowerCase().includes(searchTerm.toLowerCase())
@@ -146,7 +195,7 @@ const Admin = () => {
 
   return (
     <div className="min-h-screen">
-      <Navbar />
+      <Navbar realtimeStatus={realtimeStatus} />
       
       <div className="p-6">
         <div className="max-w-6xl mx-auto">
@@ -375,6 +424,13 @@ const Admin = () => {
               ) : (
                 <p className="text-gold/40 italic">Location not set</p>
               )}
+            </Card>
+
+            <Card glass>
+              <p className="text-gold/60 text-sm mb-3">Last Update</p>
+              <p className="text-gold">
+                {formatTimestamp(selectedUser.lastUpdateAt || selectedUser.lastSeen || selectedUser.updatedAt)}
+              </p>
             </Card>
           </div>
         )}
