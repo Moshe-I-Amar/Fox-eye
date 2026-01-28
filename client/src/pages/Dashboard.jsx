@@ -178,7 +178,12 @@ const MapComponent = ({
               marker: false
             }}
             edit={{
-              edit: true,
+              edit: {
+                selectedPathOptions: {
+                  color: DEFAULT_AO_COLOR,
+                  fillOpacity: 0.25
+                }
+              },
               remove: false
             }}
           />
