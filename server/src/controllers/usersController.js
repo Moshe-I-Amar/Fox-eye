@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const { getIO } = require('../realtime/socket');
 
 const getAllUsers = async (req, res) => {
   try {
@@ -139,6 +140,24 @@ const updateMyLocation = async (req, res) => {
     };
 
     await req.user.save();
+
+    const payload = {
+      userId: req.user._id.toString(),
+      coordinates: [longitude, latitude],
+      updatedAt: req.user.updatedAt ? req.user.updatedAt.toISOString() : new Date().toISOString()
+    };
+
+    try {
+      const io = getIO();
+      const socketId = req.headers['x-socket-id'];
+      if (socketId) {
+        io.except(socketId).emit('location:update', payload);
+      } else {
+        io.emit('location:update', payload);
+      }
+    } catch (socketError) {
+      console.warn('Socket emit failed for location:update:', socketError.message);
+    }
 
     res.json({
       success: true,

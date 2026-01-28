@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import { Icon } from 'leaflet';
 import { userService } from '../services/usersApi';
-import socketService from '../services/socketService';
+import socketClient from '../realtime/socketClient';
+import { authService } from '../services/authApi';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Modal from '../components/ui/Modal';
@@ -102,6 +103,8 @@ const Dashboard = () => {
   const [locationError, setLocationError] = useState('');
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
+  const currentUser = authService.getCurrentUser();
+  const currentUserId = currentUser?.id || currentUser?._id;
 
   // Initialize socket connection
   useEffect(() => {
@@ -109,11 +112,11 @@ const Dashboard = () => {
       const token = localStorage.getItem('token');
       if (token) {
         try {
-          await socketService.connect(token);
+          await socketClient.connect(token);
           setRealtimeEnabled(true);
           
           // Subscribe to presence updates
-          socketService.subscribeToPresence();
+          socketClient.subscribeToPresence();
           
           console.log('Socket connected and authenticated');
         } catch (error) {
@@ -126,7 +129,7 @@ const Dashboard = () => {
     initSocket();
 
     return () => {
-      socketService.disconnect();
+      socketClient.disconnect();
     };
   }, []);
 
@@ -153,7 +156,22 @@ const Dashboard = () => {
 
     const handleLocationUpdate = (data) => {
       console.log('Received location update:', data);
-      
+
+      if (!data?.coordinates || data.coordinates.length !== 2) {
+        return;
+      }
+
+      const [longitude, latitude] = data.coordinates;
+
+      if (currentUserId && data.userId === currentUserId) {
+        setUserLocation([latitude, longitude]);
+      }
+
+      const nextLocation = {
+        type: 'Point',
+        coordinates: [longitude, latitude]
+      };
+
       // Update users list if the updated user is in our current view
       setUsers(prevUsers => {
         const userIndex = prevUsers.findIndex(u => u._id === data.userId);
@@ -161,46 +179,18 @@ const Dashboard = () => {
           const updatedUsers = [...prevUsers];
           updatedUsers[userIndex] = {
             ...updatedUsers[userIndex],
-            location: data.location,
+            location: nextLocation,
             distance: calculateDistance(
               mapCenter,
-              [data.location.coordinates[1], data.location.coordinates[0]]
+              [latitude, longitude]
             )
           };
           return updatedUsers;
-        } else if (isUserWithinRadius(data, mapCenter, radius)) {
-          // Add new user if within radius
-          return [...prevUsers, {
-            _id: data.userId,
-            name: data.name,
-            email: data.email,
-            role: data.role,
-            location: data.location,
-            distance: calculateDistance(
-              mapCenter,
-              [data.location.coordinates[1], data.location.coordinates[0]]
-            ),
-            isOnline: true
-          }];
         }
         return prevUsers;
       });
 
       setOnlineUsers(prev => new Set([...prev, data.userId]));
-    };
-
-    const handleUserJoined = (data) => {
-      console.log('User joined:', data);
-      setOnlineUsers(prev => new Set([...prev, data.userId]));
-    };
-
-    const handleUserLeft = (data) => {
-      console.log('User left:', data);
-      setOnlineUsers(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(data.userId);
-        return newSet;
-      });
     };
 
     const handlePresenceUpdate = (data) => {
@@ -211,20 +201,16 @@ const Dashboard = () => {
       console.error('Socket error:', error);
     };
 
-    socketService.on('location:updated', handleLocationUpdate);
-    socketService.on('presence:user_joined', handleUserJoined);
-    socketService.on('presence:user_left', handleUserLeft);
-    socketService.on('presence:update', handlePresenceUpdate);
-    socketService.on('error', handleSocketError);
+    socketClient.on('location:update', handleLocationUpdate);
+    socketClient.on('presence:update', handlePresenceUpdate);
+    socketClient.on('error', handleSocketError);
 
     return () => {
-      socketService.off('location:updated', handleLocationUpdate);
-      socketService.off('presence:user_joined', handleUserJoined);
-      socketService.off('presence:user_left', handleUserLeft);
-      socketService.off('presence:update', handlePresenceUpdate);
-      socketService.off('error', handleSocketError);
+      socketClient.off('location:update', handleLocationUpdate);
+      socketClient.off('presence:update', handlePresenceUpdate);
+      socketClient.off('error', handleSocketError);
     };
-  }, [realtimeEnabled, mapCenter, radius]);
+  }, [realtimeEnabled, mapCenter, radius, currentUserId]);
 
   // Initial data fetch
   useEffect(() => {
@@ -248,18 +234,13 @@ const Dashboard = () => {
     return Math.round(R * c * 100) / 100; // Distance in km with 2 decimal places
   };
 
-  const isUserWithinRadius = (user, center, radiusKm) => {
-    const distance = calculateDistance(center, [user.location.coordinates[1], user.location.coordinates[0]]);
-    return distance <= radiusKm;
-  };
-
   const fetchNearbyUsers = async () => {
     try {
       setLoading(true);
       
       // Use socket for real-time data if available, otherwise fall back to HTTP
-      if (realtimeEnabled && socketService.isSocketConnected()) {
-        socketService.requestLocation(mapCenter, radius, true);
+      if (realtimeEnabled && socketClient.isSocketConnected()) {
+        socketClient.requestLocation(mapCenter, radius, true);
       } else {
         const response = await userService.getUsersNearby(mapCenter[0], mapCenter[1], radius);
         setUsers(response.data.users);
@@ -284,10 +265,10 @@ const Dashboard = () => {
       setLoading(false);
     };
 
-    socketService.on('location:response', handleLocationResponse);
+    socketClient.on('location:response', handleLocationResponse);
 
     return () => {
-      socketService.off('location:response', handleLocationResponse);
+      socketClient.off('location:response', handleLocationResponse);
     };
   }, [realtimeEnabled, onlineUsers]);
 
@@ -310,8 +291,8 @@ const Dashboard = () => {
         
         try {
           // Update location via socket if available, otherwise HTTP
-          if (realtimeEnabled && socketService.isSocketConnected()) {
-            socketService.updateLocation([longitude, latitude]);
+          if (realtimeEnabled && socketClient.isSocketConnected()) {
+            socketClient.updateLocation([longitude, latitude]);
             console.log('Location updated via socket');
           } else {
             await userService.updateMyLocation([longitude, latitude]);

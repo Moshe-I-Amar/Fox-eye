@@ -147,6 +147,14 @@ class SocketService {
       timestamp: timestamp || new Date().toISOString()
     };
 
+    const minimalUpdate = {
+      userId: socket.userId,
+      coordinates: [longitude, latitude],
+      updatedAt: user.updatedAt ? user.updatedAt.toISOString() : new Date().toISOString()
+    };
+
+    socket.broadcast.emit('location:update', minimalUpdate);
+
     // Emit to all clients in general room (except sender)
     socket.broadcast.emit('location:updated', locationUpdate);
     
