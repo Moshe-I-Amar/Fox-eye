@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { authService } from '../services/authApi';
 import { userService } from '../services/usersApi';
 import socketService from '../services/socketService';
 import Button from '../components/ui/Button';
@@ -21,9 +23,70 @@ const Admin = () => {
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState('offline');
+  const [realtimeNotice, setRealtimeNotice] = useState('');
+  const [realtimeNoticeTone, setRealtimeNoticeTone] = useState('warning');
+  const navigate = useNavigate();
 
   // Initialize socket for admin features
   useEffect(() => {
+    const handleConnect = () => {
+      setRealtimeEnabled(true);
+      setRealtimeStatus('connected');
+      setRealtimeNotice('');
+    };
+
+    const handleDisconnect = (payload = {}) => {
+      const reason = payload?.reason;
+      if (reason === 'io client disconnect' || reason === 'auth_error') {
+        setRealtimeStatus('offline');
+        return;
+      }
+      setRealtimeStatus('reconnecting');
+      setRealtimeNoticeTone('warning');
+      setRealtimeNotice('Live updates disconnected. Attempting to reconnect...');
+    };
+
+    const handleReconnect = () => {
+      setRealtimeStatus('reconnecting');
+      setRealtimeNoticeTone('warning');
+      setRealtimeNotice('Reconnecting to live updates...');
+    };
+
+    const handleConnectError = () => {
+      setRealtimeStatus('reconnecting');
+      setRealtimeNoticeTone('warning');
+      setRealtimeNotice('Live updates disconnected. Attempting to reconnect...');
+    };
+
+    const handleReconnectFailed = () => {
+      setRealtimeStatus('offline');
+      setRealtimeEnabled(false);
+      setRealtimeNoticeTone('warning');
+      setRealtimeNotice('Live updates are unavailable. Using HTTP fallback.');
+    };
+
+    const handleAuthError = () => {
+      setRealtimeStatus('offline');
+      setRealtimeEnabled(false);
+      setRealtimeNoticeTone('error');
+      setRealtimeNotice('Session expired. Redirecting to login...');
+      authService.logout();
+      navigate('/login', {
+        replace: true,
+        state: {
+          reason: 'session-expired',
+          message: 'Your session expired. Please sign in again.'
+        }
+      });
+    };
+
+    socketService.on('connect', handleConnect);
+    socketService.on('disconnected', handleDisconnect);
+    socketService.on('reconnecting', handleReconnect);
+    socketService.on('connect_error', handleConnectError);
+    socketService.on('reconnect_failed', handleReconnectFailed);
+    socketService.on('auth_error', handleAuthError);
+
     const initSocket = async () => {
       const token = localStorage.getItem('token');
       const user = JSON.parse(localStorage.getItem('user') || '{}');
@@ -39,6 +102,10 @@ const Admin = () => {
           
           console.log('Admin socket connected and authenticated');
         } catch (error) {
+          const message = `${error?.message || ''}`.toLowerCase();
+          if (message.includes('authentication error') || message.includes('token expired') || message.includes('invalid token')) {
+            return;
+          }
           console.error('Failed to connect admin socket:', error);
           setRealtimeEnabled(false);
           setRealtimeStatus('offline');
@@ -49,27 +116,15 @@ const Admin = () => {
     initSocket();
 
     return () => {
-      socketService.disconnect();
-    };
-  }, []);
-
-  useEffect(() => {
-    const handleConnect = () => setRealtimeStatus('connected');
-    const handleDisconnect = () => setRealtimeStatus('reconnecting');
-    const handleReconnect = () => setRealtimeStatus('reconnecting');
-
-    socketService.on('connect', handleConnect);
-    socketService.on('disconnected', handleDisconnect);
-    socketService.on('reconnecting', handleReconnect);
-    socketService.on('connect_error', handleDisconnect);
-
-    return () => {
       socketService.off('connect', handleConnect);
       socketService.off('disconnected', handleDisconnect);
       socketService.off('reconnecting', handleReconnect);
-      socketService.off('connect_error', handleDisconnect);
+      socketService.off('connect_error', handleConnectError);
+      socketService.off('reconnect_failed', handleReconnectFailed);
+      socketService.off('auth_error', handleAuthError);
+      socketService.disconnect();
     };
-  }, []);
+  }, [navigate]);
 
   // Listen for real-time location updates (admin receives all updates)
   useEffect(() => {
@@ -196,6 +251,20 @@ const Admin = () => {
   return (
     <div className="min-h-screen">
       <Navbar realtimeStatus={realtimeStatus} />
+
+      {realtimeNotice && (
+        <div className="px-6 pt-4">
+          <div
+            className={`rounded-xl border px-4 py-3 text-sm ${
+              realtimeNoticeTone === 'error'
+                ? 'border-red-500/40 bg-red-500/10 text-red-300'
+                : 'border-gold/30 bg-gold/10 text-gold/80'
+            }`}
+          >
+            {realtimeNotice}
+          </div>
+        </div>
+      )}
       
       <div className="p-6">
         <div className="max-w-6xl mx-auto">

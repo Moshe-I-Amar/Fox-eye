@@ -119,6 +119,64 @@ Limitations:
 - `location:updated` - Receive real-time location changes
 - `presence:user_joined/left` - User join/leave notifications
 
+## Realtime System
+
+### Socket Authentication (JWT Handshake)
+Socket connections authenticate with the same JWT used for REST requests. The token is sent during the Socket.io handshake using either `auth.token` or the `Authorization: Bearer <token>` header. The server validates the token in middleware and attaches the user to the socket.
+
+Example client connection:
+```js
+import { io } from 'socket.io-client';
+
+const socket = io('http://localhost:5000', {
+  auth: { token: localStorage.getItem('token') },
+  transports: ['websocket', 'polling']
+});
+```
+
+### Events and Payloads
+**`presence:update`** (server -> client)
+```json
+{
+  "userId": "64f5...",
+  "online": true,
+  "lastSeen": "2026-01-28T23:59:00.000Z"
+}
+```
+
+**`location:update`** (server -> client, minimal payload for live map updates)
+```json
+{
+  "userId": "64f5...",
+  "coordinates": [-74.006, 40.7128],
+  "updatedAt": "2026-01-28T23:59:00.000Z"
+}
+```
+
+**`viewport:subscribe`** (client -> server)
+```json
+{
+  "minLat": 40.70,
+  "minLng": -74.03,
+  "maxLat": 40.75,
+  "maxLng": -73.98,
+  "zoom": 13
+}
+```
+
+### Example Flows
+1. **Connect and subscribe**
+   - Client opens a socket with `auth.token`.
+   - Client emits `presence:subscribe` and `viewport:subscribe` after connect.
+2. **Live updates**
+   - Client emits `location:update` when the user location changes.
+   - Server broadcasts `location:update` to viewport subscribers and `presence:update` on joins/leaves.
+
+### Troubleshooting & Debug Tips
+- **Server logs**: check `server` console output for connect, disconnect, and auth errors.
+- **Connection state**: in the browser console, inspect `socket.connected` or watch the UI live-status indicator (Navbar).
+- **Reconnect loops**: if tokens are expired, the client disables reconnect and redirects to login.
+
 ## 📱 Usage
 
 ### User Registration & Login

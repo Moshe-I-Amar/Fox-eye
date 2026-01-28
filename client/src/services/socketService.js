@@ -5,6 +5,8 @@ class SocketService {
     this.socket = null;
     this.isConnected = false;
     this.eventHandlers = new Map();
+    this.authFailed = false;
+    this.maxReconnectAttempts = 5;
   }
 
   connect(token) {
@@ -16,6 +18,7 @@ class SocketService {
       try {
         const serverUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
         
+        this.authFailed = false;
         this.socket = io(serverUrl, {
           auth: {
             token: token
@@ -23,8 +26,9 @@ class SocketService {
           transports: ['websocket', 'polling'],
           timeout: 20000,
           reconnection: true,
-          reconnectionAttempts: 5,
-          reconnectionDelay: 1000
+          reconnectionAttempts: this.maxReconnectAttempts,
+          reconnectionDelay: 1000,
+          reconnectionDelayMax: 5000
         });
 
         // Connection events
@@ -49,6 +53,11 @@ class SocketService {
         this.socket.on('connect_error', (error) => {
           console.error('Socket connection error:', error);
           this.isConnected = false;
+          if (this.isAuthError(error)) {
+            this.handleAuthFailure(error);
+            reject(error);
+            return;
+          }
           this.emit('connect_error', error);
           reject(error);
         });
@@ -60,6 +69,10 @@ class SocketService {
 
         this.socket.on('reconnect_attempt', (attempt) => {
           this.emit('reconnecting', { attempt });
+        });
+
+        this.socket.io.on('reconnect_failed', () => {
+          this.emit('reconnect_failed', { attempts: this.maxReconnectAttempts });
         });
 
         // Location events
@@ -108,6 +121,7 @@ class SocketService {
       this.socket.disconnect();
       this.socket = null;
       this.isConnected = false;
+      this.authFailed = false;
     }
   }
 
@@ -135,6 +149,25 @@ class SocketService {
         }
       });
     }
+  }
+
+  isAuthError(error) {
+    const message = `${error?.message || error || ''}`.toLowerCase();
+    return message.includes('authentication error') || message.includes('token expired') || message.includes('invalid token');
+  }
+
+  handleAuthFailure(error) {
+    this.authFailed = true;
+    if (this.socket?.io?.opts) {
+      this.socket.io.opts.reconnection = false;
+    }
+    if (this.socket?.connected) {
+      this.socket.disconnect();
+    }
+    this.emit('auth_error', {
+      message: error?.message || 'Authentication error',
+      error
+    });
   }
 
   // Socket methods

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import { Icon } from 'leaflet';
 import { userService } from '../services/usersApi';
@@ -161,14 +162,75 @@ const Dashboard = () => {
   const [onlineUsers, setOnlineUsers] = useState(new Set());
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState('offline');
+  const [realtimeNotice, setRealtimeNotice] = useState('');
+  const [realtimeNoticeTone, setRealtimeNoticeTone] = useState('warning');
   const [liveUpdateIds, setLiveUpdateIds] = useState(new Set());
   const liveUpdateTimers = useRef(new Map());
   const [viewportBounds, setViewportBounds] = useState(null);
   const currentUser = authService.getCurrentUser();
   const currentUserId = currentUser?.id || currentUser?._id;
+  const navigate = useNavigate();
 
   // Initialize socket connection
   useEffect(() => {
+    const handleConnect = () => {
+      setRealtimeEnabled(true);
+      setRealtimeStatus('connected');
+      setRealtimeNotice('');
+    };
+
+    const handleDisconnect = (payload = {}) => {
+      const reason = payload?.reason;
+      if (reason === 'io client disconnect' || reason === 'auth_error') {
+        setRealtimeStatus('offline');
+        return;
+      }
+      setRealtimeStatus('reconnecting');
+      setRealtimeNoticeTone('warning');
+      setRealtimeNotice('Live updates disconnected. Attempting to reconnect...');
+    };
+
+    const handleReconnect = () => {
+      setRealtimeStatus('reconnecting');
+      setRealtimeNoticeTone('warning');
+      setRealtimeNotice('Reconnecting to live updates...');
+    };
+
+    const handleConnectError = () => {
+      setRealtimeStatus('reconnecting');
+      setRealtimeNoticeTone('warning');
+      setRealtimeNotice('Live updates disconnected. Attempting to reconnect...');
+    };
+
+    const handleReconnectFailed = () => {
+      setRealtimeStatus('offline');
+      setRealtimeEnabled(false);
+      setRealtimeNoticeTone('warning');
+      setRealtimeNotice('Live updates are unavailable. Using HTTP fallback.');
+    };
+
+    const handleAuthError = () => {
+      setRealtimeStatus('offline');
+      setRealtimeEnabled(false);
+      setRealtimeNoticeTone('error');
+      setRealtimeNotice('Session expired. Redirecting to login...');
+      authService.logout();
+      navigate('/login', {
+        replace: true,
+        state: {
+          reason: 'session-expired',
+          message: 'Your session expired. Please sign in again.'
+        }
+      });
+    };
+
+    socketClient.on('connect', handleConnect);
+    socketClient.on('disconnect', handleDisconnect);
+    socketClient.on('reconnecting', handleReconnect);
+    socketClient.on('connect_error', handleConnectError);
+    socketClient.on('reconnect_failed', handleReconnectFailed);
+    socketClient.on('auth_error', handleAuthError);
+
     const initSocket = async () => {
       const token = localStorage.getItem('token');
       if (token) {
@@ -182,6 +244,10 @@ const Dashboard = () => {
           
           console.log('Socket connected and authenticated');
         } catch (error) {
+          const message = `${error?.message || ''}`.toLowerCase();
+          if (message.includes('authentication error') || message.includes('token expired') || message.includes('invalid token')) {
+            return;
+          }
           console.error('Failed to connect socket:', error);
           setRealtimeEnabled(false);
           setRealtimeStatus('offline');
@@ -192,35 +258,15 @@ const Dashboard = () => {
     initSocket();
 
     return () => {
-      socketClient.disconnect();
-    };
-  }, []);
-
-  useEffect(() => {
-    const handleConnect = () => {
-      setRealtimeStatus('connected');
-    };
-
-    const handleDisconnect = () => {
-      setRealtimeStatus('reconnecting');
-    };
-
-    const handleReconnect = () => {
-      setRealtimeStatus('reconnecting');
-    };
-
-    socketClient.on('connect', handleConnect);
-    socketClient.on('disconnect', handleDisconnect);
-    socketClient.on('reconnecting', handleReconnect);
-    socketClient.on('connect_error', handleDisconnect);
-
-    return () => {
       socketClient.off('connect', handleConnect);
       socketClient.off('disconnect', handleDisconnect);
       socketClient.off('reconnecting', handleReconnect);
-      socketClient.off('connect_error', handleDisconnect);
+      socketClient.off('connect_error', handleConnectError);
+      socketClient.off('reconnect_failed', handleReconnectFailed);
+      socketClient.off('auth_error', handleAuthError);
+      socketClient.disconnect();
     };
-  }, []);
+  }, [navigate]);
 
   useEffect(() => {
     return () => {
@@ -346,10 +392,10 @@ const Dashboard = () => {
     socketClient.on('error', handleSocketError);
 
     return () => {
-    socketClient.off('location:update', handleLocationUpdate);
-    socketClient.off('presence:update', handlePresenceUpdate);
-    socketClient.off('error', handleSocketError);
-  };
+      socketClient.off('location:update', handleLocationUpdate);
+      socketClient.off('presence:update', handlePresenceUpdate);
+      socketClient.off('error', handleSocketError);
+    };
   }, [realtimeEnabled, mapCenter, radius, currentUserId]);
 
   useEffect(() => {
@@ -495,6 +541,20 @@ const Dashboard = () => {
   return (
     <div className="min-h-screen">
       <Navbar realtimeStatus={realtimeStatus} />
+
+      {realtimeNotice && (
+        <div className="px-6 pt-4">
+          <div
+            className={`rounded-xl border px-4 py-3 text-sm ${
+              realtimeNoticeTone === 'error'
+                ? 'border-red-500/40 bg-red-500/10 text-red-300'
+                : 'border-gold/30 bg-gold/10 text-gold/80'
+            }`}
+          >
+            {realtimeNotice}
+          </div>
+        </div>
+      )}
       
       <div className="flex h-[calc(100vh-80px)]">
         {/* Left Panel - User List */}

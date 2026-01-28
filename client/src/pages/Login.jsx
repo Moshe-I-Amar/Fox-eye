@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../services/authApi';
 import Button from '../components/ui/Button';
@@ -14,6 +14,17 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const authNotice = useMemo(() => {
+    const fromState = location.state?.message;
+    if (fromState) {
+      return fromState;
+    }
+    const reason = new URLSearchParams(location.search).get('reason');
+    if (reason === 'session-expired') {
+      return 'Your session expired. Please sign in again.';
+    }
+    return '';
+  }, [location.search, location.state?.message]);
 
   const from = location.state?.from?.pathname || '/dashboard';
 
@@ -58,6 +69,11 @@ const Login = () => {
 
         <Card glass goldBorder>
           <form onSubmit={handleSubmit} className="space-y-6">
+            {authNotice && (
+              <div className="bg-gold/15 border border-gold/40 rounded-lg p-3 text-gold/90 text-sm animate-slide-up">
+                {authNotice}
+              </div>
+            )}
             {errors.form && (
               <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-3 text-red-300 text-sm animate-slide-up">
                 {errors.form}
