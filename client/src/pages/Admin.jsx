@@ -79,14 +79,35 @@ const Admin = () => {
       });
     };
 
+    const handlePresenceUpdate = (data) => {
+      setUsers(prevUsers =>
+        prevUsers.map(user =>
+          user._id === data.userId
+            ? { ...user, online: data.online, lastSeen: data.lastSeen }
+            : user
+        )
+      );
+      setOnlineUsers(prev => {
+        const next = new Set(prev);
+        if (data.online) {
+          next.add(data.userId);
+        } else {
+          next.delete(data.userId);
+        }
+        return next;
+      });
+    };
+
     socketService.on('admin:location:updated', handleAdminLocationUpdate);
     socketService.on('presence:user_joined', handleUserJoined);
     socketService.on('presence:user_left', handleUserLeft);
+    socketService.on('presence:update', handlePresenceUpdate);
 
     return () => {
       socketService.off('admin:location:updated', handleAdminLocationUpdate);
       socketService.off('presence:user_joined', handleUserJoined);
       socketService.off('presence:user_left', handleUserLeft);
+      socketService.off('presence:update', handlePresenceUpdate);
     };
   }, [realtimeEnabled]);
 

@@ -1,10 +1,13 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
+const PresenceManager = require('../utils/presenceManager');
 
 class SocketService {
   constructor(io) {
     this.io = io;
-    this.connectedUsers = new Map(); // userId -> socket.id
+    this.presenceManager = new PresenceManager();
     this.userSockets = new Map(); // socket.id -> userInfo
+    this.userProfiles = new Map(); // userId -> userInfo
     this.setupEventHandlers();
   }
 
@@ -13,12 +16,16 @@ class SocketService {
       console.log(`User connected: ${socket.userId} (${socket.id})`);
       
       // Store user connection
-      this.connectedUsers.set(socket.userId, socket.id);
       this.userSockets.set(socket.id, {
         userId: socket.userId,
         role: socket.userRole,
-        userInfo: socket.userInfo
+        userInfo: socket.userInfo,
+        connectedAt: new Date()
       });
+      this.userProfiles.set(socket.userId, socket.userInfo);
+
+      const presenceUpdate = this.presenceManager.addSocket(socket.userId, socket.id);
+      const presenceState = this.presenceManager.getPresence(socket.userId);
 
       // Join user to their own room
       socket.join(`user:${socket.userId}`);
@@ -26,6 +33,21 @@ class SocketService {
       // Join admin room if user is admin
       if (socket.userRole === 'admin') {
         socket.join('admin');
+      }
+
+      if (presenceUpdate.wasOffline) {
+        this.io.emit('presence:update', {
+          userId: socket.userId,
+          online: true,
+          lastSeen: presenceState?.lastSeen || new Date()
+        });
+        socket.broadcast.emit('presence:user_joined', {
+          userId: socket.userId,
+          name: socket.userInfo.name,
+          email: socket.userInfo.email,
+          role: socket.userInfo.role,
+          timestamp: new Date().toISOString()
+        });
       }
 
       // Handle location updates
@@ -110,6 +132,7 @@ class SocketService {
     if (userInfo) {
       userInfo.userInfo = user;
     }
+    this.userProfiles.set(socket.userId, user);
 
     // Broadcast location update to all subscribed clients
     const locationUpdate = {
@@ -149,6 +172,9 @@ class SocketService {
     const maxDistance = parseFloat(radius) * 1000; // Convert to meters
 
     // Get nearby users from database
+    const onlineUserIds = this.presenceManager
+      .getOnlineUserIds()
+      .map((id) => new mongoose.Types.ObjectId(id));
     const nearbyUsers = await User.aggregate([
       {
         $geoNear: {
@@ -159,7 +185,7 @@ class SocketService {
           distanceField: "distance",
           maxDistance: maxDistance,
           spherical: true,
-          query: excludeSelf ? { _id: { $ne: socket.userId } } : {}
+          query: excludeSelf ? { _id: { $ne: new mongoose.Types.ObjectId(socket.userId) } } : {}
         }
       },
       {
@@ -171,7 +197,7 @@ class SocketService {
           location: 1,
           createdAt: 1,
           distance: { $round: [{ $divide: ["$distance", 1000] }, 2] },
-          isOnline: { $in: ["$_id", Array.from(this.connectedUsers.keys())] }
+          isOnline: { $in: ["$_id", onlineUserIds] }
         }
       },
       {
@@ -189,20 +215,23 @@ class SocketService {
   async handlePresenceSubscription(socket) {
     // Get all connected users
     const connectedUsers = [];
-    
-    for (const [userId, socketId] of this.connectedUsers) {
-      const userInfo = this.userSockets.get(socketId);
-      if (userInfo && userInfo.userInfo) {
-        connectedUsers.push({
-          userId,
-          socketId,
-          name: userInfo.userInfo.name,
-          email: userInfo.userInfo.email,
-          role: userInfo.userInfo.role,
-          isOnline: true,
-          location: userInfo.userInfo.location
-        });
+    for (const userId of this.presenceManager.getOnlineUserIds()) {
+      const profile = this.userProfiles.get(userId);
+      if (!profile) {
+        continue;
       }
+      const sockets = this.presenceManager.getSockets(userId);
+      const socketId = sockets.values().next().value || null;
+      connectedUsers.push({
+        userId,
+        socketId,
+        name: profile.name,
+        email: profile.email,
+        role: profile.role,
+        isOnline: true,
+        lastSeen: this.presenceManager.getPresence(userId)?.lastSeen || null,
+        location: profile.location
+      });
     }
 
     socket.emit('presence:users', {
@@ -210,39 +239,39 @@ class SocketService {
       timestamp: new Date().toISOString()
     });
 
-    // Notify others about new user joining
-    const userInfo = this.userSockets.get(socket.id);
-    if (userInfo) {
-      socket.broadcast.emit('presence:user_joined', {
+  }
+
+  handleDisconnect(socket) {
+    // Remove from connection maps
+    this.userSockets.delete(socket.id);
+    const presenceUpdate = this.presenceManager.removeSocket(socket.userId, socket.id);
+    const presenceState = this.presenceManager.getPresence(socket.userId);
+
+    // Notify others about user leaving
+    if (!presenceUpdate.nowOnline) {
+      this.io.emit('presence:update', {
         userId: socket.userId,
-        name: userInfo.userInfo.name,
-        email: userInfo.userInfo.email,
-        role: userInfo.userInfo.role,
+        online: false,
+        lastSeen: presenceState?.lastSeen || new Date()
+      });
+      this.userProfiles.delete(socket.userId);
+      socket.broadcast.emit('presence:user_left', {
+        userId: socket.userId,
         timestamp: new Date().toISOString()
       });
     }
   }
 
-  handleDisconnect(socket) {
-    // Remove from connection maps
-    this.connectedUsers.delete(socket.userId);
-    this.userSockets.delete(socket.id);
-
-    // Notify others about user leaving
-    socket.broadcast.emit('presence:user_left', {
-      userId: socket.userId,
-      timestamp: new Date().toISOString()
-    });
-  }
-
   // Utility methods
   emitToUser(userId, event, data) {
-    const socketId = this.connectedUsers.get(userId);
-    if (socketId) {
-      this.io.to(socketId).emit(event, data);
-      return true;
+    const sockets = this.presenceManager.getSockets(userId);
+    if (!sockets || sockets.size === 0) {
+      return false;
     }
-    return false;
+    for (const socketId of sockets) {
+      this.io.to(socketId).emit(event, data);
+    }
+    return true;
   }
 
   emitToAdmins(event, data) {
@@ -251,16 +280,13 @@ class SocketService {
 
   getConnectedUsers() {
     const users = [];
-    for (const [userId, socketId] of this.connectedUsers) {
-      const userInfo = this.userSockets.get(socketId);
-      if (userInfo) {
-        users.push({
-          userId,
-          socketId,
-          role: userInfo.role,
-          connectedAt: userInfo.connectedAt
-        });
-      }
+    for (const [socketId, userInfo] of this.userSockets.entries()) {
+      users.push({
+        userId: userInfo.userId,
+        socketId,
+        role: userInfo.role,
+        connectedAt: userInfo.connectedAt
+      });
     }
     return users;
   }

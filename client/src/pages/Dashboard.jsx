@@ -77,6 +77,9 @@ const MapComponent = ({ center, users, userLocation, onUserClick }) => {
             <div className="text-jet">
               <p className="font-semibold">{user.name}</p>
               <p className="text-sm text-gray-600">{user.email}</p>
+              <p className={`text-xs ${user.isOnline ? 'text-green-600' : 'text-gray-500'}`}>
+                {user.isOnline ? 'Online' : 'Offline'}
+              </p>
               {user.distance && (
                 <p className="text-xs text-gray-500">{user.distance} km away</p>
               )}
@@ -131,6 +134,23 @@ const Dashboard = () => {
   useEffect(() => {
     if (!realtimeEnabled) return;
 
+    const applyPresenceUpdate = (payload) => {
+      setUsers(prevUsers => prevUsers.map(user => (
+        user._id === payload.userId
+          ? { ...user, isOnline: payload.online, lastSeen: payload.lastSeen }
+          : user
+      )));
+      setOnlineUsers(prev => {
+        const next = new Set(prev);
+        if (payload.online) {
+          next.add(payload.userId);
+        } else {
+          next.delete(payload.userId);
+        }
+        return next;
+      });
+    };
+
     const handleLocationUpdate = (data) => {
       console.log('Received location update:', data);
       
@@ -183,6 +203,10 @@ const Dashboard = () => {
       });
     };
 
+    const handlePresenceUpdate = (data) => {
+      applyPresenceUpdate(data);
+    };
+
     const handleSocketError = (error) => {
       console.error('Socket error:', error);
     };
@@ -190,12 +214,14 @@ const Dashboard = () => {
     socketService.on('location:updated', handleLocationUpdate);
     socketService.on('presence:user_joined', handleUserJoined);
     socketService.on('presence:user_left', handleUserLeft);
+    socketService.on('presence:update', handlePresenceUpdate);
     socketService.on('error', handleSocketError);
 
     return () => {
       socketService.off('location:updated', handleLocationUpdate);
       socketService.off('presence:user_joined', handleUserJoined);
       socketService.off('presence:user_left', handleUserLeft);
+      socketService.off('presence:update', handlePresenceUpdate);
       socketService.off('error', handleSocketError);
     };
   }, [realtimeEnabled, mapCenter, radius]);

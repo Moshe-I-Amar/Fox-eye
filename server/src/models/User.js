@@ -45,6 +45,14 @@ const userSchema = new mongoose.Schema({
         message: 'Coordinates must be [longitude, latitude] in valid ranges'
       }
     }
+  },
+  online: {
+    type: Boolean,
+    default: false
+  },
+  lastSeen: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true

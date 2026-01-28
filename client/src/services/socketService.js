@@ -82,6 +82,10 @@ class SocketService {
           this.emit('presence:user_left', data);
         });
 
+        this.socket.on('presence:update', (data) => {
+          this.emit('presence:update', data);
+        });
+
         // Admin events
         this.socket.on('admin:location:updated', (data) => {
           this.emit('admin:location:updated', data);
