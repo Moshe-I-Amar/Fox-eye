@@ -10,6 +10,7 @@ const { initSocket } = require('./realtime/socket');
 
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
+const aoRoutes = require('./routes/aoRoutes');
 
 const app = express();
 
@@ -57,6 +58,7 @@ app.get('/api/health', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/aos', aoRoutes);
 
 app.use('*', (req, res) => {
   res.status(404).json({
