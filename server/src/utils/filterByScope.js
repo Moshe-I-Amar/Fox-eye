@@ -19,6 +19,31 @@ const toIdString = (value) => {
   return null;
 };
 
+const normalizeScopeValues = (values = []) => {
+  const unique = new Map();
+
+  values.forEach((value) => {
+    if (!value) {
+      return;
+    }
+
+    if (typeof value === 'object') {
+      if (value._id) {
+        unique.set(String(value._id), value._id);
+        return;
+      }
+      if (value.id) {
+        unique.set(String(value.id), value.id);
+        return;
+      }
+    }
+
+    unique.set(String(value), value);
+  });
+
+  return Array.from(unique.values());
+};
+
 const normalizeScope = (scope) => {
   const mapToSet = (values = []) => {
     const ids = values.map(toIdString).filter(Boolean);
@@ -72,8 +97,36 @@ const filterAssetsByScope = (assets, scope) => filterByScope(assets, scope);
 
 const filterEventsByScope = (events, scope) => filterByScope(events, scope);
 
+const buildScopeQuery = (scope) => {
+  const squads = normalizeScopeValues(scope?.squads);
+  const teams = normalizeScopeValues(scope?.teams);
+  const companies = normalizeScopeValues(scope?.companies);
+  const units = normalizeScopeValues(scope?.units);
+  const clauses = [];
+
+  if (squads.length) {
+    clauses.push({ squadId: { $in: squads } });
+  }
+  if (teams.length) {
+    clauses.push({ teamId: { $in: teams } });
+  }
+  if (companies.length) {
+    clauses.push({ companyId: { $in: companies } });
+  }
+  if (units.length) {
+    clauses.push({ unitId: { $in: units } });
+  }
+
+  if (!clauses.length) {
+    return null;
+  }
+
+  return { $or: clauses };
+};
+
 module.exports = {
   filterUsersByScope,
   filterAssetsByScope,
-  filterEventsByScope
+  filterEventsByScope,
+  buildScopeQuery
 };

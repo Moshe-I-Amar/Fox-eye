@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { resolveUserScope } = require('../services/scopeResolver');
 
 const authenticateSocket = async (socket, next) => {
   try {
@@ -19,6 +20,7 @@ const authenticateSocket = async (socket, next) => {
     socket.userId = user._id.toString();
     socket.userRole = user.role;
     socket.userInfo = user;
+    socket.userScope = await resolveUserScope(user);
     
     next();
   } catch (error) {

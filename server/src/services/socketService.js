@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const User = require('../models/User');
 const PresenceManager = require('../utils/presenceManager');
+const { filterUsersByScope, buildScopeQuery } = require('../utils/filterByScope');
 const {
   normalizeBounds,
   getCellSizeForZoom,
@@ -33,6 +34,7 @@ class SocketService {
         userId: socket.userId,
         role: socket.userRole,
         userInfo: socket.userInfo,
+        userScope: socket.userScope,
         connectedAt: new Date()
       });
       this.userProfiles.set(socket.userId, socket.userInfo);
@@ -199,6 +201,22 @@ class SocketService {
     const [latitude, longitude] = center;
     const maxDistance = parseFloat(radius) * 1000; // Convert to meters
 
+    const scopeQuery = buildScopeQuery(socket.userScope);
+    if (!scopeQuery) {
+      socket.emit('location:response', {
+        users: [],
+        center: { lat: latitude, lng: longitude, radius: parseFloat(radius) },
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+
+    const queryClauses = [scopeQuery];
+    if (excludeSelf) {
+      queryClauses.push({ _id: { $ne: new mongoose.Types.ObjectId(socket.userId) } });
+    }
+    const query = queryClauses.length === 1 ? queryClauses[0] : { $and: queryClauses };
+
     // Get nearby users from database
     const onlineUserIds = this.presenceManager
       .getOnlineUserIds()
@@ -213,7 +231,7 @@ class SocketService {
           distanceField: "distance",
           maxDistance: maxDistance,
           spherical: true,
-          query: excludeSelf ? { _id: { $ne: new mongoose.Types.ObjectId(socket.userId) } } : {}
+          query
         }
       },
       {
@@ -242,7 +260,8 @@ class SocketService {
 
   async handlePresenceSubscription(socket) {
     // Get all connected users
-    const connectedUsers = [];
+    const connectedProfiles = [];
+    const socketIdsByUser = new Map();
     for (const userId of this.presenceManager.getOnlineUserIds()) {
       const profile = this.userProfiles.get(userId);
       if (!profile) {
@@ -250,17 +269,21 @@ class SocketService {
       }
       const sockets = this.presenceManager.getSockets(userId);
       const socketId = sockets.values().next().value || null;
-      connectedUsers.push({
-        userId,
-        socketId,
-        name: profile.name,
-        email: profile.email,
-        role: profile.role,
-        isOnline: true,
-        lastSeen: this.presenceManager.getPresence(userId)?.lastSeen || null,
-        location: profile.location
-      });
+      socketIdsByUser.set(String(profile._id), socketId);
+      connectedProfiles.push(profile);
     }
+
+    const allowedProfiles = filterUsersByScope(connectedProfiles, socket.userScope);
+    const connectedUsers = allowedProfiles.map((profile) => ({
+      userId: profile._id.toString(),
+      socketId: socketIdsByUser.get(String(profile._id)) || null,
+      name: profile.name,
+      email: profile.email,
+      role: profile.role,
+      isOnline: true,
+      lastSeen: this.presenceManager.getPresence(profile._id.toString())?.lastSeen || null,
+      location: profile.location
+    }));
 
     socket.emit('presence:users', {
       users: connectedUsers,
@@ -378,6 +401,11 @@ class SocketService {
   async emitLocationUpdateToSubscribers({ minimalUpdate, locationUpdate, excludeSocketId }) {
     const [longitude, latitude] = minimalUpdate.coordinates;
     const candidateSockets = new Map();
+    const targetProfile = this.userProfiles.get(minimalUpdate.userId);
+
+    if (!targetProfile) {
+      return;
+    }
 
     for (const cellSize of this.gridCellSizeCounts.keys()) {
       const room = getCellId(latitude, longitude, cellSize);
@@ -398,11 +426,28 @@ class SocketService {
       if (!isPointInBounds(viewport, latitude, longitude)) {
         continue;
       }
+      const recipientInfo = this.userSockets.get(socket.id);
+      if (!recipientInfo) {
+        continue;
+      }
+      const isSelf = recipientInfo.userId === minimalUpdate.userId;
+      if (!isSelf && filterUsersByScope([targetProfile], recipientInfo.userScope).length === 0) {
+        continue;
+      }
       socket.emit('location:update', minimalUpdate);
       socket.emit('location:updated', locationUpdate);
     }
 
-    this.io.to('admin').emit('admin:location:updated', locationUpdate);
+    for (const [socketId, recipientInfo] of this.userSockets.entries()) {
+      if (recipientInfo.role !== 'admin') {
+        continue;
+      }
+      const isSelf = recipientInfo.userId === minimalUpdate.userId;
+      if (!isSelf && filterUsersByScope([targetProfile], recipientInfo.userScope).length === 0) {
+        continue;
+      }
+      this.io.to(socketId).emit('admin:location:updated', locationUpdate);
+    }
   }
 
   async broadcastLocationUpdate({ userId, name, email, role, coordinates, timestamp, updatedAt, excludeSocketId }) {

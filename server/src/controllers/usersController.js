@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const { getSocketService } = require('../realtime/socket');
+const { buildScopeQuery } = require('../utils/filterByScope');
 
 const getAllUsers = async (req, res) => {
   try {
@@ -82,6 +83,21 @@ const getUsersNearby = async (req, res) => {
       });
     }
 
+    const scopeQuery = buildScopeQuery(req.scope);
+    if (!scopeQuery) {
+      return res.json({
+        success: true,
+        data: {
+          users: [],
+          center: {
+            lat: latitude,
+            lng: longitude,
+            radius: parseFloat(distance)
+          }
+        }
+      });
+    }
+
     const users = await User.aggregate([
       {
         $geoNear: {
@@ -91,7 +107,8 @@ const getUsersNearby = async (req, res) => {
           },
           distanceField: "distance",
           maxDistance: maxDistance,
-          spherical: true
+          spherical: true,
+          query: scopeQuery
         }
       },
       {
