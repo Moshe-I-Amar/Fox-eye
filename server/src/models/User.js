@@ -27,6 +27,26 @@ const userSchema = new mongoose.Schema({
     enum: ['admin', 'user'],
     default: 'user'
   },
+  unitId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Unit',
+    required: [true, 'Unit is required']
+  },
+  companyId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Company',
+    required: [true, 'Company is required']
+  },
+  teamId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Team',
+    required: [true, 'Team is required']
+  },
+  squadId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Squad',
+    required: [true, 'Squad is required']
+  },
   location: {
     type: {
       type: String,

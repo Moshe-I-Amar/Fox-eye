@@ -24,6 +24,18 @@ const validateRegister = [
   body('password')
     .isLength({ min: 6 })
     .withMessage('Password must be at least 6 characters'),
+  body('unitId')
+    .isMongoId()
+    .withMessage('Unit ID is required'),
+  body('companyId')
+    .isMongoId()
+    .withMessage('Company ID is required'),
+  body('teamId')
+    .isMongoId()
+    .withMessage('Team ID is required'),
+  body('squadId')
+    .isMongoId()
+    .withMessage('Squad ID is required'),
   handleValidationErrors
 ];
 

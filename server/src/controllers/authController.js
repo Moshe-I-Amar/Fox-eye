@@ -9,7 +9,7 @@ const generateToken = (id) => {
 
 const register = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, unitId, companyId, teamId, squadId } = req.body;
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -22,7 +22,11 @@ const register = async (req, res) => {
     const user = new User({
       name,
       email,
-      password
+      password,
+      unitId,
+      companyId,
+      teamId,
+      squadId
     });
 
     await user.save();

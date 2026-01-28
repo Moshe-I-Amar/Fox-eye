@@ -130,7 +130,11 @@ curl -X POST http://localhost:5000/api/auth/register \
   -d '{
     "name": "John Doe",
     "email": "john@example.com",
-    "password": "password123"
+    "password": "password123",
+    "unitId": "64c1f3a2b1e5c4d9a1234567",
+    "companyId": "64c1f3a2b1e5c4d9a1234568",
+    "teamId": "64c1f3a2b1e5c4d9a1234569",
+    "squadId": "64c1f3a2b1e5c4d9a123456a"
   }'
 ```
 
@@ -179,6 +183,10 @@ curl -X PUT http://localhost:5000/api/users/me/location \
   email: String (required, unique, valid email),
   password: String (required, hashed, min 6 chars),
   role: { type: String, enum: ["admin","user"], default: "user" },
+  unitId: ObjectId (required, ref: "Unit"),
+  companyId: ObjectId (required, ref: "Company"),
+  teamId: ObjectId (required, ref: "Team"),
+  squadId: ObjectId (required, ref: "Squad"),
   location: {
     type: { type: String, enum: ["Point"], default: "Point" },
     coordinates: [Number] // [longitude, latitude]
