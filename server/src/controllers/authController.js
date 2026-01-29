@@ -1,5 +1,7 @@
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const asyncHandler = require('../utils/asyncHandler');
+const { AppError } = require('../utils/errors');
 
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -7,104 +9,71 @@ const generateToken = (id) => {
   });
 };
 
-const register = async (req, res) => {
-  try {
-    const { name, email, password, unitId, companyId, teamId, squadId } = req.body;
+const register = asyncHandler(async (req, res) => {
+  const { name, email, password, unitId, companyId, teamId, squadId } = req.body;
 
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: 'User already exists with this email'
-      });
-    }
-
-    const user = new User({
-      name,
-      email,
-      password,
-      unitId,
-      companyId,
-      teamId,
-      squadId
-    });
-
-    await user.save();
-
-    const token = generateToken(user._id);
-
-    res.status(201).json({
-      success: true,
-      message: 'User registered successfully',
-      data: {
-        user,
-        token
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Server error during registration',
-      details: error.message
-    });
+  const existingUser = await User.findOne({ email });
+  if (existingUser) {
+    throw new AppError('USER_EXISTS', 'User already exists with this email', 400);
   }
-};
 
-const login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
+  const user = new User({
+    name,
+    email,
+    password,
+    unitId,
+    companyId,
+    teamId,
+    squadId
+  });
 
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password'
-      });
+  await user.save();
+
+  const token = generateToken(user._id);
+
+  res.status(201).json({
+    success: true,
+    message: 'User registered successfully',
+    data: {
+      user,
+      token
     }
+  });
+});
 
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password'
-      });
+const login = asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+
+  const user = await User.findOne({ email });
+  if (!user) {
+    throw new AppError('AUTH_INVALID_CREDENTIALS', 'Invalid email or password', 401);
+  }
+
+  const isMatch = await user.comparePassword(password);
+  if (!isMatch) {
+    throw new AppError('AUTH_INVALID_CREDENTIALS', 'Invalid email or password', 401);
+  }
+
+  const token = generateToken(user._id);
+
+  res.json({
+    success: true,
+    message: 'Login successful',
+    data: {
+      user,
+      token
     }
+  });
+});
 
-    const token = generateToken(user._id);
-
-    res.json({
-      success: true,
-      message: 'Login successful',
-      data: {
-        user,
-        token
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Server error during login',
-      details: error.message
-    });
-  }
-};
-
-const getMe = async (req, res) => {
-  try {
-    res.json({
-      success: true,
-      data: {
-        user: req.user
-      }
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Server error fetching user data',
-      details: error.message
-    });
-  }
-};
+const getMe = asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      user: req.user
+    }
+  });
+});
 
 module.exports = {
   register,

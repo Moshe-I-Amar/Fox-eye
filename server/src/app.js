@@ -6,6 +6,7 @@ const rateLimit = require('express-rate-limit');
 const http = require('http');
 const connectDB = require('./config/db');
 const errorHandler = require('./middleware/errorHandler');
+const { AppError } = require('./utils/errors');
 const { initSocket } = require('./realtime/socket');
 
 const authRoutes = require('./routes/authRoutes');
@@ -28,8 +29,10 @@ const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   message: {
-    success: false,
-    message: 'Too many requests from this IP, please try again later.'
+    error: {
+      code: 'RATE_LIMITED',
+      message: 'Too many requests from this IP, please try again later.'
+    }
   }
 });
 app.use('/api/', limiter);
@@ -38,8 +41,10 @@ const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
   message: {
-    success: false,
-    message: 'Too many authentication attempts, please try again later.'
+    error: {
+      code: 'RATE_LIMITED',
+      message: 'Too many authentication attempts, please try again later.'
+    }
   }
 });
 app.use('/api/auth/login', authLimiter);
@@ -60,11 +65,8 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/aos', aoRoutes);
 
-app.use('*', (req, res) => {
-  res.status(404).json({
-    success: false,
-    message: 'Route not found'
-  });
+app.use('*', (req, res, next) => {
+  next(new AppError('NOT_FOUND', 'Route not found', 404));
 });
 
 app.use(errorHandler);
