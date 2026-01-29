@@ -73,6 +73,24 @@ const MapViewportSubscriber = ({ onViewportChange, debounceMs = 250 }) => {
 
 const DEFAULT_AO_COLOR = '#C7A76C';
 const DEFAULT_AO_ICON = '';
+const AO_ICON_MAX_LENGTH = 6;
+const AO_NAME_MIN = 2;
+const AO_NAME_MAX = 100;
+const AO_ICON_PRESETS = [
+  '🛰️', '📡', '🛡️', '⚡', '🧭', '📍', '🚨', '🔭',
+  '🧯', '🩺', '🚑', '🚒', '⛑️', '🛠️', '⚙️', '📦',
+  '🧱', '🚧', '🛰', '🗺️', '🔒', '✅', '⚠️', '⭐'
+];
+const AO_PRESET_OPTIONS = [
+  { label: 'Ops Command', icon: '🛰️', color: '#C7A76C' },
+  { label: 'Medical', icon: '🩺', color: '#6DD3CE' },
+  { label: 'Fire', icon: '🚒', color: '#FF6B6B' },
+  { label: 'Search', icon: '🔭', color: '#7BD389' },
+  { label: 'Security', icon: '🛡️', color: '#4C6EF5' },
+  { label: 'Hazard', icon: '⚠️', color: '#F4C542' },
+  { label: 'Engineering', icon: '🛠️', color: '#9C7AFA' },
+  { label: 'Logistics', icon: '📦', color: '#FFA94D' }
+];
 
 const escapeXml = (value = '') =>
   value
@@ -83,6 +101,12 @@ const escapeXml = (value = '') =>
     .replace(/'/g, '&#39;');
 
 const isImageUrl = (value = '') => /^(data:image|https?:\/\/|\/|blob:)/i.test(value.trim());
+const isValidIconValue = (value = '') => {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  if (isImageUrl(trimmed)) return true;
+  return trimmed.length <= AO_ICON_MAX_LENGTH;
+};
 
 const svgToDataUrl = (svg) => `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 
@@ -447,6 +471,8 @@ const Dashboard = () => {
   const [aoDraft, setAoDraft] = useState(null);
   const [aoModalMode, setAoModalMode] = useState('create');
   const [aoForm, setAoForm] = useState({ name: '', color: DEFAULT_AO_COLOR, icon: '' });
+  const [aoIconError, setAoIconError] = useState('');
+  const [aoNameError, setAoNameError] = useState('');
   const [selectedAO, setSelectedAO] = useState(null);
   const [aoSaving, setAoSaving] = useState(false);
   const featureGroupRef = useRef(null);
@@ -779,6 +805,8 @@ const Dashboard = () => {
       layer: event.layer
     });
     setAoForm({ name: '', color: DEFAULT_AO_COLOR, icon: '' });
+    setAoIconError('');
+    setAoNameError('');
     setAoModalMode('create');
     setAoError('');
   };
@@ -830,6 +858,8 @@ const Dashboard = () => {
       color: ao.style?.color || DEFAULT_AO_COLOR,
       icon: ao.style?.icon || ''
     });
+    setAoIconError('');
+    setAoNameError('');
     setAoModalMode('edit');
     setAoError('');
   };
@@ -839,12 +869,19 @@ const Dashboard = () => {
     setAoDraft(null);
     setSelectedAO(null);
     setAoForm({ name: '', color: DEFAULT_AO_COLOR, icon: '' });
+    setAoIconError('');
+    setAoNameError('');
   };
 
   const handleAOSubmit = async () => {
     const trimmedName = aoForm.name.trim();
-    if (trimmedName.length < 2) {
-      setAoError('AO name must be at least 2 characters.');
+    if (trimmedName.length < AO_NAME_MIN || trimmedName.length > AO_NAME_MAX) {
+      setAoError(`AO name must be between ${AO_NAME_MIN} and ${AO_NAME_MAX} characters.`);
+      return;
+    }
+    const trimmedIcon = aoForm.icon.trim();
+    if (!isValidIconValue(trimmedIcon)) {
+      setAoError(`Icon must be an image URL/path or ${AO_ICON_MAX_LENGTH} characters or fewer.`);
       return;
     }
 
@@ -865,7 +902,7 @@ const Dashboard = () => {
         const payload = {
           name: trimmedName,
           polygon: aoDraft.polygon,
-          style: { color: aoForm.color, icon: aoForm.icon?.trim() || null },
+          style: { color: aoForm.color, icon: trimmedIcon || null },
           companyId: currentUser.companyId
         };
 
@@ -879,7 +916,7 @@ const Dashboard = () => {
       } else if (selectedAO) {
         const response = await aoService.updateAO(selectedAO._id, {
           name: trimmedName,
-          style: { color: aoForm.color, icon: aoForm.icon?.trim() || null }
+          style: { color: aoForm.color, icon: trimmedIcon || null }
         });
         const updatedAO = response?.data?.ao;
         if (updatedAO) {
@@ -891,7 +928,7 @@ const Dashboard = () => {
                 ? {
                     ...ao,
                     name: trimmedName,
-                    style: { ...ao.style, color: aoForm.color, icon: aoForm.icon?.trim() || null }
+                    style: { ...ao.style, color: aoForm.color, icon: trimmedIcon || null }
                   }
                 : ao
             )
@@ -1237,8 +1274,47 @@ const Dashboard = () => {
               type="text"
               placeholder="e.g. North Sector"
               value={aoForm.name}
-              onChange={(event) => setAoForm((prev) => ({ ...prev, name: event.target.value }))}
+              onChange={(event) => {
+                const value = event.target.value;
+                setAoForm((prev) => ({ ...prev, name: value }));
+                if (!value.trim()) {
+                  setAoNameError('Name is required.');
+                } else if (value.trim().length < AO_NAME_MIN) {
+                  setAoNameError(`Name must be at least ${AO_NAME_MIN} characters.`);
+                } else if (value.trim().length > AO_NAME_MAX) {
+                  setAoNameError(`Name must be ${AO_NAME_MAX} characters or fewer.`);
+                } else {
+                  setAoNameError('');
+                }
+              }}
             />
+            {aoNameError && <p className="text-xs text-red-400">{aoNameError}</p>}
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-gold">Presets</label>
+            <select
+              className="dark-input w-full"
+              value=""
+              onChange={(event) => {
+                const selected = AO_PRESET_OPTIONS.find((preset) => preset.label === event.target.value);
+                if (!selected) return;
+                setAoForm((prev) => ({
+                  ...prev,
+                  name: prev.name || selected.label,
+                  color: selected.color,
+                  icon: selected.icon
+                }));
+                setAoIconError('');
+                setAoNameError('');
+              }}
+            >
+              <option value="" disabled>Select a preset</option>
+              {AO_PRESET_OPTIONS.map((preset) => (
+                <option key={preset.label} value={preset.label}>
+                  {preset.label}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="space-y-2">
             <label className="text-sm text-gold">Overlay Color</label>
@@ -1267,18 +1343,46 @@ const Dashboard = () => {
                 type="text"
                 placeholder="e.g. 🛰️ or /icons/ao.png"
                 value={aoForm.icon}
-                onChange={(event) => setAoForm((prev) => ({ ...prev, icon: event.target.value }))}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setAoForm((prev) => ({ ...prev, icon: value }));
+                  if (!isValidIconValue(value)) {
+                    setAoIconError(`Use an image URL/path or ${AO_ICON_MAX_LENGTH} characters or fewer.`);
+                  } else {
+                    setAoIconError('');
+                  }
+                }}
               />
             </div>
             <p className="text-xs text-gold/60">
               Use a short label/emoji or an image URL/path for the AO icon.
             </p>
+            {aoIconError && <p className="text-xs text-red-400">{aoIconError}</p>}
+            <div className="grid grid-cols-8 gap-2 pt-2">
+              {AO_ICON_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  className={`h-8 w-8 rounded-lg border text-sm ${
+                    aoForm.icon === preset
+                      ? 'border-gold bg-gold/15'
+                      : 'border-gold/20 hover:border-gold/60'
+                  }`}
+                  onClick={() => {
+                    setAoForm((prev) => ({ ...prev, icon: preset }));
+                    setAoIconError('');
+                  }}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="flex items-center justify-end space-x-2">
             <Button variant="ghost" onClick={handleAOCancel}>
               Cancel
             </Button>
-            <Button onClick={handleAOSubmit} disabled={aoSaving}>
+            <Button onClick={handleAOSubmit} disabled={aoSaving || !!aoIconError || !!aoNameError}>
               {aoSaving ? 'Saving...' : 'Save'}
             </Button>
           </div>
