@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authApi';
 import { userService } from '../services/usersApi';
@@ -25,6 +25,8 @@ const Admin = () => {
   const [realtimeStatus, setRealtimeStatus] = useState('offline');
   const [realtimeNotice, setRealtimeNotice] = useState('');
   const [realtimeNoticeTone, setRealtimeNoticeTone] = useState('warning');
+  const [breachAlerts, setBreachAlerts] = useState([]);
+  const breachTimersRef = useRef(new Map());
   const navigate = useNavigate();
 
   // Initialize socket for admin features
@@ -186,22 +188,64 @@ const Admin = () => {
       );
     };
 
+    const handleAoBreach = (data) => {
+      if (!data?.userId) {
+        return;
+      }
+
+      const alertId = `${data.userId}-${data.timestamp || Date.now()}`;
+      setBreachAlerts(prev => [
+        {
+          id: alertId,
+          userId: data.userId,
+          name: data.name || 'Unknown',
+          timestamp: data.timestamp || new Date().toISOString(),
+          breachSince: data.breachSince || data.timestamp || new Date().toISOString(),
+          aoName: data.ao?.name || 'Unassigned',
+          cooldownMs: data.cooldownMs,
+          graceMs: data.graceMs,
+          toleranceMeters: data.toleranceMeters
+        },
+        ...prev
+      ].slice(0, 5));
+
+      if (breachTimersRef.current.has(alertId)) {
+        clearTimeout(breachTimersRef.current.get(alertId));
+      }
+
+      const timeoutId = setTimeout(() => {
+        setBreachAlerts(prev => prev.filter(alert => alert.id !== alertId));
+        breachTimersRef.current.delete(alertId);
+      }, 8000);
+
+      breachTimersRef.current.set(alertId, timeoutId);
+    };
+
     socketService.on('admin:location:updated', handleAdminLocationUpdate);
     socketService.on('presence:user_joined', handleUserJoined);
     socketService.on('presence:user_left', handleUserLeft);
     socketService.on('presence:update', handlePresenceUpdate);
+    socketService.on('ao:breach', handleAoBreach);
 
     return () => {
       socketService.off('admin:location:updated', handleAdminLocationUpdate);
       socketService.off('presence:user_joined', handleUserJoined);
       socketService.off('presence:user_left', handleUserLeft);
       socketService.off('presence:update', handlePresenceUpdate);
+      socketService.off('ao:breach', handleAoBreach);
     };
   }, [realtimeEnabled]);
 
   useEffect(() => {
     fetchUsers();
   }, [pagination.page, pagination.limit]);
+
+  useEffect(() => {
+    return () => {
+      breachTimersRef.current.forEach((timer) => clearTimeout(timer));
+      breachTimersRef.current.clear();
+    };
+  }, []);
 
   const fetchUsers = async () => {
     try {
@@ -262,6 +306,32 @@ const Admin = () => {
             }`}
           >
             {realtimeNotice}
+          </div>
+        </div>
+      )}
+
+      {breachAlerts.length > 0 && (
+        <div className="px-6 pt-4">
+          <div className="space-y-2">
+            {breachAlerts.map((alert) => (
+              <div
+                key={alert.id}
+                className="rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-semibold">
+                    AO breach: {alert.name}
+                  </div>
+                  <div className="text-xs text-red-200/80">
+                    {formatTimestamp(alert.timestamp)}
+                  </div>
+                </div>
+                <div className="text-xs text-red-200/70">
+                  Last safe AO: {alert.aoName} · Grace {Math.round((alert.graceMs || 0) / 1000)}s ·
+                  Tolerance {alert.toleranceMeters || 0}m
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
