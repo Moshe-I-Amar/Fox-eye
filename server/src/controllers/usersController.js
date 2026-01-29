@@ -175,6 +175,15 @@ const updateMyLocation = async (req, res) => {
     try {
       const socketService = getSocketService();
       const socketId = req.headers['x-socket-id'];
+      try {
+        await socketService.evaluateAoBreach({
+          user: req.user,
+          coordinates: [longitude, latitude],
+          timestamp: payload.updatedAt
+        });
+      } catch (breachError) {
+        console.warn('AO breach evaluation failed:', breachError.message);
+      }
       await socketService.broadcastLocationUpdate({
         userId: req.user._id.toString(),
         name: req.user.name,

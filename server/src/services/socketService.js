@@ -2,7 +2,12 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const PresenceManager = require('../utils/presenceManager');
 const { filterUsersByScope, buildScopeQuery } = require('../utils/filterByScope');
-const { getAoForPoint, toAoSummary } = require('../utils/aoDetection');
+const {
+  getAoForPoint,
+  toAoSummary,
+  getActiveAos,
+  findAoForPointWithTolerance
+} = require('../utils/aoDetection');
 const {
   normalizeBounds,
   getCellSizeForZoom,
@@ -23,6 +28,12 @@ class SocketService {
     this.gridCellSizeCounts = new Map(); // cellSize -> count
     this.lastViewportUpdateAt = new Map(); // socket.id -> timestamp
     this.viewportThrottleMs = 250;
+    this.userBreachState = new Map(); // userId -> { outsideSince, lastAlertAt, lastSafeAo }
+    this.breachConfig = {
+      gpsToleranceMeters: this.parseConfigNumber('AO_BREACH_GPS_TOLERANCE_METERS', 15),
+      graceMs: this.parseConfigNumber('AO_BREACH_GRACE_MS', 10000),
+      cooldownMs: this.parseConfigNumber('AO_BREACH_COOLDOWN_MS', 60000)
+    };
     this.setupEventHandlers();
   }
 
@@ -157,6 +168,11 @@ class SocketService {
       companyId: user.companyId
     });
     const aoSummary = toAoSummary(ao);
+    await this.evaluateAoBreach({
+      user,
+      coordinates: [longitude, latitude],
+      timestamp: timestamp || new Date().toISOString()
+    });
 
     // Update stored user info
     const userInfo = this.userSockets.get(socket.id);
@@ -378,6 +394,7 @@ class SocketService {
         lastSeen: presenceState?.lastSeen || new Date()
       });
       this.userProfiles.delete(socket.userId);
+      this.userBreachState.delete(socket.userId);
       socket.broadcast.emit('presence:user_left', {
         userId: socket.userId,
         timestamp: new Date().toISOString()
@@ -457,6 +474,90 @@ class SocketService {
       }
       this.io.to(socketId).emit('admin:location:updated', locationUpdate);
     }
+  }
+
+  parseConfigNumber(envKey, fallback) {
+    const raw = process.env[envKey];
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+    return fallback;
+  }
+
+  async evaluateAoBreach({ user, coordinates, timestamp }) {
+    if (!user || !coordinates || coordinates.length !== 2) {
+      return;
+    }
+
+    const companyId = user.companyId;
+    if (!companyId) {
+      return;
+    }
+
+    const activeAos = await getActiveAos({ companyId });
+    if (!activeAos || activeAos.length === 0) {
+      this.userBreachState.delete(user._id.toString());
+      return;
+    }
+
+    const point = [coordinates[0], coordinates[1]];
+    const toleranceMeters = this.breachConfig.gpsToleranceMeters;
+    const insideAo = findAoForPointWithTolerance(point, activeAos, toleranceMeters);
+    const userId = user._id.toString();
+    const now = Date.now();
+
+    const state = this.userBreachState.get(userId) || {
+      outsideSince: null,
+      lastAlertAt: 0,
+      lastSafeAo: null
+    };
+
+    if (insideAo) {
+      state.outsideSince = null;
+      state.lastSafeAo = {
+        id: insideAo._id?.toString?.() || String(insideAo._id),
+        name: insideAo.name
+      };
+      this.userBreachState.set(userId, state);
+      return;
+    }
+
+    if (!state.outsideSince) {
+      state.outsideSince = now;
+      this.userBreachState.set(userId, state);
+      return;
+    }
+
+    if (now - state.outsideSince < this.breachConfig.graceMs) {
+      this.userBreachState.set(userId, state);
+      return;
+    }
+
+    if (now - (state.lastAlertAt || 0) < this.breachConfig.cooldownMs) {
+      this.userBreachState.set(userId, state);
+      return;
+    }
+
+    state.lastAlertAt = now;
+    this.userBreachState.set(userId, state);
+
+    const payload = {
+      userId,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      coordinates,
+      timestamp: timestamp || new Date().toISOString(),
+      breachSince: new Date(state.outsideSince).toISOString(),
+      ao: state.lastSafeAo,
+      toleranceMeters: this.breachConfig.gpsToleranceMeters,
+      graceMs: this.breachConfig.graceMs,
+      cooldownMs: this.breachConfig.cooldownMs
+    };
+
+    this.io.to('admin').emit('ao:breach', payload);
+    this.emitToUser(userId, 'ao:breach', payload);
   }
 
   async broadcastLocationUpdate({ userId, name, email, role, coordinates, ao, timestamp, updatedAt, excludeSocketId }) {

@@ -110,6 +110,11 @@ class SocketService {
           this.emit('admin:location:updated', data);
         });
 
+        // AO breach alerts
+        this.socket.on('ao:breach', (data) => {
+          this.emit('ao:breach', data);
+        });
+
       } catch (error) {
         reject(error);
       }

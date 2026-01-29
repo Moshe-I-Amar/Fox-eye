@@ -77,6 +77,10 @@ class SocketClient {
       this.socket.on('location:response', (data) => {
         this.emit('location:response', data);
       });
+
+      this.socket.on('ao:breach', (data) => {
+        this.emit('ao:breach', data);
+      });
     });
   }
 
