@@ -446,7 +446,7 @@ const Dashboard = () => {
   const [aoError, setAoError] = useState('');
   const [aoDraft, setAoDraft] = useState(null);
   const [aoModalMode, setAoModalMode] = useState('create');
-  const [aoForm, setAoForm] = useState({ name: '', color: DEFAULT_AO_COLOR });
+  const [aoForm, setAoForm] = useState({ name: '', color: DEFAULT_AO_COLOR, icon: '' });
   const [selectedAO, setSelectedAO] = useState(null);
   const [aoSaving, setAoSaving] = useState(false);
   const featureGroupRef = useRef(null);
@@ -778,7 +778,7 @@ const Dashboard = () => {
       polygon,
       layer: event.layer
     });
-    setAoForm({ name: '', color: DEFAULT_AO_COLOR });
+    setAoForm({ name: '', color: DEFAULT_AO_COLOR, icon: '' });
     setAoModalMode('create');
     setAoError('');
   };
@@ -827,7 +827,8 @@ const Dashboard = () => {
     setSelectedAO(ao);
     setAoForm({
       name: ao.name || '',
-      color: ao.style?.color || DEFAULT_AO_COLOR
+      color: ao.style?.color || DEFAULT_AO_COLOR,
+      icon: ao.style?.icon || ''
     });
     setAoModalMode('edit');
     setAoError('');
@@ -837,7 +838,7 @@ const Dashboard = () => {
     clearDraftLayer();
     setAoDraft(null);
     setSelectedAO(null);
-    setAoForm({ name: '', color: DEFAULT_AO_COLOR });
+    setAoForm({ name: '', color: DEFAULT_AO_COLOR, icon: '' });
   };
 
   const handleAOSubmit = async () => {
@@ -864,7 +865,7 @@ const Dashboard = () => {
         const payload = {
           name: trimmedName,
           polygon: aoDraft.polygon,
-          style: { color: aoForm.color },
+          style: { color: aoForm.color, icon: aoForm.icon?.trim() || null },
           companyId: currentUser.companyId
         };
 
@@ -878,7 +879,7 @@ const Dashboard = () => {
       } else if (selectedAO) {
         const response = await aoService.updateAO(selectedAO._id, {
           name: trimmedName,
-          style: { color: aoForm.color }
+          style: { color: aoForm.color, icon: aoForm.icon?.trim() || null }
         });
         const updatedAO = response?.data?.ao;
         if (updatedAO) {
@@ -887,7 +888,11 @@ const Dashboard = () => {
           setAos((prev) =>
             prev.map((ao) =>
               ao._id === selectedAO._id
-                ? { ...ao, name: trimmedName, style: { ...ao.style, color: aoForm.color } }
+                ? {
+                    ...ao,
+                    name: trimmedName,
+                    style: { ...ao.style, color: aoForm.color, icon: aoForm.icon?.trim() || null }
+                  }
                 : ao
             )
           );
@@ -1243,6 +1248,31 @@ const Dashboard = () => {
               onChange={(event) => setAoForm((prev) => ({ ...prev, color: event.target.value }))}
               className="h-10 w-20 rounded border border-gold/30 bg-transparent"
             />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-gold">Overlay Icon</label>
+            <div className="flex items-center space-x-3">
+              <span
+                className="h-10 w-10 rounded-full border border-gold/30 flex items-center justify-center text-sm text-white"
+                style={{ backgroundColor: aoForm.color }}
+              >
+                {aoForm.icon && isImageUrl(aoForm.icon) ? (
+                  <img src={aoForm.icon} alt="" className="h-5 w-5" />
+                ) : (
+                  (aoForm.icon || '').slice(0, 2)
+                )}
+              </span>
+              <input
+                className="dark-input w-full"
+                type="text"
+                placeholder="e.g. 🛰️ or /icons/ao.png"
+                value={aoForm.icon}
+                onChange={(event) => setAoForm((prev) => ({ ...prev, icon: event.target.value }))}
+              />
+            </div>
+            <p className="text-xs text-gold/60">
+              Use a short label/emoji or an image URL/path for the AO icon.
+            </p>
           </div>
           <div className="flex items-center justify-end space-x-2">
             <Button variant="ghost" onClick={handleAOCancel}>
