@@ -1,7 +1,9 @@
 const User = require('../models/User');
 const { getSocketService } = require('../realtime/socket');
 const { buildScopeQuery } = require('../utils/filterByScope');
-const { getAoForPoint, toAoSummary } = require('../utils/aoDetection');
+const { LocationService } = require('../services/locationService');
+
+const locationService = new LocationService();
 
 const getAllUsers = async (req, res) => {
   try {
@@ -150,61 +152,27 @@ const getUsersNearby = async (req, res) => {
 const updateMyLocation = async (req, res) => {
   try {
     const { coordinates } = req.body;
-    const [longitude, latitude] = coordinates;
-
-    req.user.location = {
-      type: 'Point',
-      coordinates: [longitude, latitude]
-    };
-
-    await req.user.save();
-
-    const ao = await getAoForPoint({
-      point: [longitude, latitude],
-      companyId: req.user.companyId
-    });
-    const aoSummary = toAoSummary(ao);
-
-    const payload = {
-      userId: req.user._id.toString(),
-      coordinates: [longitude, latitude],
-      updatedAt: req.user.updatedAt ? req.user.updatedAt.toISOString() : new Date().toISOString(),
-      ao: aoSummary
-    };
-
+    let socketService = null;
     try {
-      const socketService = getSocketService();
-      const socketId = req.headers['x-socket-id'];
-      try {
-        await socketService.evaluateAoBreach({
-          user: req.user,
-          coordinates: [longitude, latitude],
-          timestamp: payload.updatedAt
-        });
-      } catch (breachError) {
-        console.warn('AO breach evaluation failed:', breachError.message);
-      }
-      await socketService.broadcastLocationUpdate({
-        userId: req.user._id.toString(),
-        name: req.user.name,
-        email: req.user.email,
-        role: req.user.role,
-        coordinates: [longitude, latitude],
-        ao: aoSummary,
-        updatedAt: payload.updatedAt,
-        timestamp: new Date().toISOString(),
-        excludeSocketId: socketId
-      });
+      socketService = getSocketService();
     } catch (socketError) {
       console.warn('Socket emit failed for location:update:', socketError.message);
     }
+    const socketId = req.headers['x-socket-id'];
+    const { user, ao } = await locationService.updateUserLocation({
+      user: req.user,
+      coordinates,
+      socketService,
+      excludeSocketId: socketId,
+      suppressSocketErrors: true
+    });
 
     res.json({
       success: true,
       message: 'Location updated successfully',
       data: {
-        user: req.user,
-        ao: aoSummary
+        user,
+        ao
       }
     });
   } catch (error) {

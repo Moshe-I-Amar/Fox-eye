@@ -3,9 +3,8 @@ const User = require('../models/User');
 const PresenceManager = require('../utils/presenceManager');
 const { filterUsersByScope, buildScopeQuery } = require('../utils/filterByScope');
 const ViolationEvent = require('../models/ViolationEvent');
+const { LocationService } = require('./locationService');
 const {
-  getAoForPoint,
-  toAoSummary,
   getActiveAos,
   findAoForPointWithTolerance,
   distanceToPolygonEdgeMeters
@@ -22,6 +21,7 @@ const {
 class SocketService {
   constructor(io) {
     this.io = io;
+    this.locationService = new LocationService();
     this.presenceManager = new PresenceManager();
     this.userSockets = new Map(); // socket.id -> userInfo
     this.userProfiles = new Map(); // userId -> userInfo
@@ -140,43 +140,12 @@ class SocketService {
 
   async handleLocationUpdate(socket, data) {
     const { coordinates, timestamp } = data;
-    
-    if (!coordinates || !Array.isArray(coordinates) || coordinates.length !== 2) {
-      throw new Error('Invalid coordinates format');
-    }
-
-    const [longitude, latitude] = coordinates;
-    
-    if (typeof longitude !== 'number' || typeof latitude !== 'number') {
-      throw new Error('Coordinates must be numbers');
-    }
-
-    // Validate coordinate ranges
-    if (longitude < -180 || longitude > 180 || latitude < -90 || latitude > 90) {
-      throw new Error('Coordinates out of valid range');
-    }
-
-    // Update user location in database
-    const user = await User.findById(socket.userId);
-    if (!user) {
-      throw new Error('User not found');
-    }
-
-    user.location = {
-      type: 'Point',
-      coordinates: [longitude, latitude]
-    };
-    await user.save();
-
-    const ao = await getAoForPoint({
-      point: [longitude, latitude],
-      companyId: user.companyId
-    });
-    const aoSummary = toAoSummary(ao);
-    await this.evaluateAoBreach({
-      user,
-      coordinates: [longitude, latitude],
-      timestamp: timestamp || new Date().toISOString()
+    const { user, payload } = await this.locationService.updateUserLocation({
+      userId: socket.userId,
+      coordinates,
+      timestamp,
+      socketService: this,
+      excludeSocketId: socket.id
     });
 
     // Update stored user info
@@ -186,37 +155,10 @@ class SocketService {
     }
     this.userProfiles.set(socket.userId, user);
 
-    // Broadcast location update to all subscribed clients
-    const locationUpdate = {
-      userId: socket.userId,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      location: {
-        type: 'Point',
-        coordinates: [longitude, latitude]
-      },
-      ao: aoSummary,
-      timestamp: timestamp || new Date().toISOString()
-    };
-
-    const minimalUpdate = {
-      userId: socket.userId,
-      coordinates: [longitude, latitude],
-      updatedAt: user.updatedAt ? user.updatedAt.toISOString() : new Date().toISOString(),
-      ao: aoSummary
-    };
-
-    await this.emitLocationUpdateToSubscribers({
-      minimalUpdate,
-      locationUpdate,
-      excludeSocketId: socket.id
-    });
-
     // Confirm to sender
     socket.emit('location:updated:confirm', {
       success: true,
-      location: locationUpdate,
+      location: payload,
       timestamp: new Date().toISOString()
     });
   }
@@ -429,10 +371,10 @@ class SocketService {
     }
   }
 
-  async emitLocationUpdateToSubscribers({ minimalUpdate, locationUpdate, excludeSocketId }) {
-    const [longitude, latitude] = minimalUpdate.coordinates;
+  async emitLocationUpdateToSubscribers({ payload, excludeSocketId }) {
+    const [longitude, latitude] = payload.coordinates;
     const candidateSockets = new Map();
-    const targetProfile = this.userProfiles.get(minimalUpdate.userId);
+    const targetProfile = this.userProfiles.get(payload.userId);
 
     if (!targetProfile) {
       return;
@@ -461,23 +403,23 @@ class SocketService {
       if (!recipientInfo) {
         continue;
       }
-      const isSelf = recipientInfo.userId === minimalUpdate.userId;
+      const isSelf = recipientInfo.userId === payload.userId;
       if (!isSelf && filterUsersByScope([targetProfile], recipientInfo.userScope).length === 0) {
         continue;
       }
-      socket.emit('location:update', minimalUpdate);
-      socket.emit('location:updated', locationUpdate);
+      socket.emit('location:update', payload);
+      socket.emit('location:updated', payload);
     }
 
     for (const [socketId, recipientInfo] of this.userSockets.entries()) {
       if (recipientInfo.role !== 'admin') {
         continue;
       }
-      const isSelf = recipientInfo.userId === minimalUpdate.userId;
+      const isSelf = recipientInfo.userId === payload.userId;
       if (!isSelf && filterUsersByScope([targetProfile], recipientInfo.userScope).length === 0) {
         continue;
       }
-      this.io.to(socketId).emit('admin:location:updated', locationUpdate);
+      this.io.to(socketId).emit('admin:location:updated', payload);
     }
   }
 
@@ -643,35 +585,14 @@ class SocketService {
     }
   }
 
-  async broadcastLocationUpdate({ userId, name, email, role, coordinates, ao, timestamp, updatedAt, excludeSocketId }) {
-    const locationUpdate = {
-      userId,
-      name,
-      email,
-      role,
-      location: {
-        type: 'Point',
-        coordinates
-      },
-      ao: ao || null,
-      timestamp: timestamp || new Date().toISOString()
-    };
-
-    const minimalUpdate = {
-      userId,
-      coordinates,
-      updatedAt: updatedAt || new Date().toISOString(),
-      ao: ao || null
-    };
-
-    const profile = this.userProfiles.get(userId);
+  async broadcastLocationUpdate({ payload, excludeSocketId }) {
+    const profile = this.userProfiles.get(payload.userId);
     if (profile) {
-      profile.location = locationUpdate.location;
+      profile.location = payload.location;
     }
 
     await this.emitLocationUpdateToSubscribers({
-      minimalUpdate,
-      locationUpdate,
+      payload,
       excludeSocketId
     });
   }
