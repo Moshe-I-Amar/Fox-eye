@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, FeatureGroup, Polygon } from 'react-leaflet';
 import { EditControl } from 'react-leaflet-draw';
@@ -72,6 +72,114 @@ const MapViewportSubscriber = ({ onViewportChange, debounceMs = 250 }) => {
 };
 
 const DEFAULT_AO_COLOR = '#C7A76C';
+const DEFAULT_AO_ICON = '';
+
+const escapeXml = (value = '') =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const isImageUrl = (value = '') => /^(data:image|https?:\/\/|\/|blob:)/i.test(value.trim());
+
+const svgToDataUrl = (svg) => `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+
+const buildPinSvg = ({ color, icon, iconUrl }) => {
+  const iconMarkup = iconUrl
+    ? `<image href="${iconUrl}" x="7" y="5" width="10" height="10" />`
+    : icon
+      ? `<text x="12" y="11" text-anchor="middle" dominant-baseline="middle" font-size="6" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif">${escapeXml(icon)}</text>`
+      : `<circle cx="12" cy="10" r="2.5" fill="#ffffff" />`;
+
+  return `
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2C8 13 2 20 2 20C2 20 12 20 20 20C20 20 16 13 12 2Z" fill="${color}" />
+      <circle cx="12" cy="10" r="4.5" fill="rgba(0,0,0,0.35)" />
+      ${iconMarkup}
+    </svg>
+  `.trim();
+};
+
+const buildDotSvg = ({ color, icon, iconUrl }) => {
+  const iconMarkup = iconUrl
+    ? `<image href="${iconUrl}" x="10" y="10" width="12" height="12" />`
+    : icon
+      ? `<text x="16" y="16" text-anchor="middle" dominant-baseline="middle" font-size="7" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif">${escapeXml(icon)}</text>`
+      : `<circle cx="16" cy="16" r="3" fill="#0a0a0a" />`;
+
+  return `
+    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="16" cy="16" r="10" fill="${color}" fill-opacity="0.25" />
+      <circle cx="16" cy="16" r="5" fill="${color}" />
+      ${iconMarkup}
+    </svg>
+  `.trim();
+};
+
+const createAoMarkerIcon = ({ color, icon, className = '', variant = 'pin' }) => {
+  const safeColor = color || DEFAULT_AO_COLOR;
+  const trimmedIcon = `${icon || DEFAULT_AO_ICON}`.trim();
+  const iconUrl = trimmedIcon && isImageUrl(trimmedIcon) ? trimmedIcon : '';
+  const iconText = iconUrl ? '' : trimmedIcon;
+  const svg = variant === 'dot'
+    ? buildDotSvg({ color: safeColor, icon: iconText, iconUrl })
+    : buildPinSvg({ color: safeColor, icon: iconText, iconUrl });
+
+  return new Icon({
+    iconUrl: svgToDataUrl(svg),
+    iconSize: [32, 32],
+    iconAnchor: variant === 'dot' ? [16, 16] : [16, 32],
+    popupAnchor: variant === 'dot' ? [0, -16] : [0, -32],
+    className
+  });
+};
+
+const isPointInPolygon = (point, polygon) => {
+  if (!point || !polygon?.coordinates?.[0]?.length) {
+    return false;
+  }
+
+  const [x, y] = point;
+  const ring = polygon.coordinates[0];
+  let inside = false;
+
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const intersects = (yi > y) !== (yj > y) &&
+      x < ((xj - xi) * (y - yi)) / (yj - yi + 0.0) + xi;
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+};
+
+const findAoForPoint = (point, aos) => {
+  if (!point || !Array.isArray(aos) || aos.length === 0) {
+    return null;
+  }
+
+  const activeAos = aos.filter((ao) => ao?.active);
+  const inactiveAos = aos.filter((ao) => !ao?.active);
+
+  for (const ao of activeAos) {
+    if (isPointInPolygon(point, ao?.polygon)) {
+      return ao;
+    }
+  }
+
+  for (const ao of inactiveAos) {
+    if (isPointInPolygon(point, ao?.polygon)) {
+      return ao;
+    }
+  }
+
+  return null;
+};
 
 const toGeoPolygon = (latLngs) => {
   if (!Array.isArray(latLngs) || latLngs.length === 0) {
@@ -126,19 +234,54 @@ const MapComponent = ({
     }
   };
 
-  const customIcon = new Icon({
-    iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJDOCAxMyAyIDIwIDIgMjBDMiAyMCAxMiAyMCAyMCAyMEMyMCAyMCAxNiAxMyAxMiAyWiIgZmlsbD0iI0M3QTc2QyIvPgo8Y2lyY2xlIGN4PSIxMiIgY3k9IjEwIiByPSIzIiBmaWxsPSIjMEEwQTAwIi8+Cjwvc3ZnPg==',
-    iconSize: [32, 32],
-    iconAnchor: [16, 32],
-    popupAnchor: [0, -32]
-  });
+  const iconCacheRef = useRef(new Map());
 
-  const userIcon = new Icon({
-    iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzIiIGhlaWdodD0iMzIiIHZpZXdCb3g9IjAgMCAzMiAzMiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iOCIgZmlsbD0iIzAwRkZGRiIgZmlsbC1vcGFjaXR5PSIwLjMiLz4KPGNpcmNsZSBjeD0iMTYiIGN5PSIxNiIgcj0iNCIgZmlsbD0iIzAwRkZGRiIvPgo8Y2lyY2xlIGN4PSIxNiIgY3k9IjE2IiByPSIyIiBmaWxsPSIjMDAwMDAwIi8+Cjwvc3ZnPg==',
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
-    popupAnchor: [0, -16]
-  });
+  const getCachedIcon = useCallback((key, create) => {
+    const cache = iconCacheRef.current;
+    if (cache.has(key)) {
+      return cache.get(key);
+    }
+    const icon = create();
+    cache.set(key, icon);
+    return icon;
+  }, []);
+
+  const getAoForPoint = useCallback(
+    (point) => findAoForPoint(point, aos),
+    [aos]
+  );
+
+  const getMarkerIcon = useCallback(
+    ({ point, className = '', variant = 'pin' }) => {
+      const ao = getAoForPoint(point);
+      const color = ao?.style?.color || DEFAULT_AO_COLOR;
+      const icon = ao?.style?.icon || DEFAULT_AO_ICON;
+      const cacheKey = `${variant}:${className}:${color}:${icon}`;
+      return getCachedIcon(cacheKey, () =>
+        createAoMarkerIcon({
+          color,
+          icon,
+          className,
+          variant
+        })
+      );
+    },
+    [getAoForPoint, getCachedIcon]
+  );
+
+  const aoStrokeStyles = useMemo(
+    () =>
+      new Map(
+        aos.map((ao) => [
+          ao._id,
+          {
+            color: ao?.style?.color || DEFAULT_AO_COLOR,
+            fillColor: ao?.style?.color || DEFAULT_AO_COLOR
+          }
+        ])
+      ),
+    [aos]
+  );
 
   return (
     <MapContainer
@@ -194,7 +337,8 @@ const MapComponent = ({
             key={ao._id}
             positions={toLatLngs(ao.polygon)}
             pathOptions={{
-              color: ao.style?.color || DEFAULT_AO_COLOR,
+              color: aoStrokeStyles.get(ao._id)?.color || DEFAULT_AO_COLOR,
+              fillColor: aoStrokeStyles.get(ao._id)?.fillColor || DEFAULT_AO_COLOR,
               fillOpacity: ao.active ? 0.2 : 0.06,
               weight: ao.active ? 2 : 1,
               dashArray: ao.active ? null : '5,6'
@@ -206,7 +350,18 @@ const MapComponent = ({
           >
             <Popup>
               <div className="text-jet">
-                <p className="font-semibold">{ao.name}</p>
+                <p className="font-semibold">
+                  {ao?.style?.icon && (
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-jet text-[10px] text-white mr-2">
+                      {isImageUrl(ao.style.icon) ? (
+                        <img src={ao.style.icon} alt="" className="h-3 w-3" />
+                      ) : (
+                        ao.style.icon
+                      )}
+                    </span>
+                  )}
+                  {ao.name}
+                </p>
                 <p className="text-xs text-gray-600">
                   {ao.active ? 'Active' : 'Inactive'}
                 </p>
@@ -220,7 +375,10 @@ const MapComponent = ({
       {userLocation && (
         <Marker
           position={userLocation}
-          icon={userIcon}
+          icon={getMarkerIcon({
+            point: [userLocation[1], userLocation[0]],
+            variant: 'dot'
+          })}
         >
           <Popup>
             <div className="text-jet">
@@ -238,12 +396,11 @@ const MapComponent = ({
           key={user._id}
           position={[user.location.coordinates[1], user.location.coordinates[0]]}
           icon={
-            liveUpdateIds.has(user._id)
-              ? new Icon({
-                  ...customIcon.options,
-                  className: 'marker-live-update'
-                })
-              : customIcon
+            getMarkerIcon({
+              point: user.location.coordinates,
+              className: liveUpdateIds.has(user._id) ? 'marker-live-update' : '',
+              variant: 'pin'
+            })
           }
           eventHandlers={{
             click: () => onUserClick(user)
@@ -847,6 +1004,25 @@ const Dashboard = () => {
     setViewportBounds(viewport);
   }, []);
 
+  const renderAoLegendIcon = (ao) => {
+    const color = ao?.style?.color || DEFAULT_AO_COLOR;
+    const icon = `${ao?.style?.icon || ''}`.trim();
+    const hasImage = icon && isImageUrl(icon);
+
+    return (
+      <span
+        className="h-6 w-6 rounded-full border border-white/10 flex items-center justify-center text-[10px] text-white"
+        style={{ backgroundColor: color }}
+      >
+        {hasImage ? (
+          <img src={icon} alt="" className="h-3.5 w-3.5" />
+        ) : (
+          icon
+        )}
+      </span>
+    );
+  };
+
   return (
     <div className="min-h-screen">
       <Navbar realtimeStatus={realtimeStatus} />
@@ -938,12 +1114,10 @@ const Dashboard = () => {
                     <div
                       key={ao._id}
                       className="flex items-center justify-between rounded-lg border border-gold/10 px-3 py-2"
+                      style={{ borderColor: ao.style?.color || DEFAULT_AO_COLOR }}
                     >
                       <div className="flex items-center space-x-2 min-w-0">
-                        <span
-                          className="h-2.5 w-2.5 rounded-full"
-                          style={{ backgroundColor: ao.style?.color || DEFAULT_AO_COLOR }}
-                        />
+                        {renderAoLegendIcon(ao)}
                         <div className="min-w-0">
                           <p className="text-sm text-gold truncate">{ao.name}</p>
                           <p className="text-[11px] text-gold/50">
