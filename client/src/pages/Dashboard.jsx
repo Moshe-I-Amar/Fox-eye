@@ -1045,6 +1045,7 @@ const Dashboard = () => {
         onClose={handleAOCancel}
         title={aoModalMode === 'create' ? 'Save Area Overlay' : 'Edit Area Overlay'}
         size="small"
+        closeOnBackdrop={false}
       >
         <div className="space-y-4">
           <div className="space-y-2">

@@ -7,6 +7,7 @@ const Modal = ({
   children, 
   size = 'medium',
   className = '',
+  closeOnBackdrop = true,
   ...props 
 }) => {
   if (!isOpen) return null;
@@ -23,7 +24,7 @@ const Modal = ({
       <div className="flex min-h-screen items-center justify-center p-4">
         <div 
           className="fixed inset-0 bg-black/60 backdrop-blur-sm"
-          onClick={onClose}
+          onClick={closeOnBackdrop ? onClose : undefined}
         />
         <div 
           className={`relative w-full ${sizeClasses[size]} glass-card rounded-xl shadow-2xl animate-slide-up ${className}`}
