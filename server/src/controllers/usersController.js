@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const { getSocketService } = require('../realtime/socket');
 const { buildScopeQuery } = require('../utils/filterByScope');
+const { getAoForPoint, toAoSummary } = require('../utils/aoDetection');
 
 const getAllUsers = async (req, res) => {
   try {
@@ -158,10 +159,17 @@ const updateMyLocation = async (req, res) => {
 
     await req.user.save();
 
+    const ao = await getAoForPoint({
+      point: [longitude, latitude],
+      companyId: req.user.companyId
+    });
+    const aoSummary = toAoSummary(ao);
+
     const payload = {
       userId: req.user._id.toString(),
       coordinates: [longitude, latitude],
-      updatedAt: req.user.updatedAt ? req.user.updatedAt.toISOString() : new Date().toISOString()
+      updatedAt: req.user.updatedAt ? req.user.updatedAt.toISOString() : new Date().toISOString(),
+      ao: aoSummary
     };
 
     try {
@@ -173,6 +181,7 @@ const updateMyLocation = async (req, res) => {
         email: req.user.email,
         role: req.user.role,
         coordinates: [longitude, latitude],
+        ao: aoSummary,
         updatedAt: payload.updatedAt,
         timestamp: new Date().toISOString(),
         excludeSocketId: socketId
@@ -185,7 +194,8 @@ const updateMyLocation = async (req, res) => {
       success: true,
       message: 'Location updated successfully',
       data: {
-        user: req.user
+        user: req.user,
+        ao: aoSummary
       }
     });
   } catch (error) {

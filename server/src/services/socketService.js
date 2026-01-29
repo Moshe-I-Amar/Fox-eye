@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const PresenceManager = require('../utils/presenceManager');
 const { filterUsersByScope, buildScopeQuery } = require('../utils/filterByScope');
+const { getAoForPoint, toAoSummary } = require('../utils/aoDetection');
 const {
   normalizeBounds,
   getCellSizeForZoom,
@@ -151,6 +152,12 @@ class SocketService {
     };
     await user.save();
 
+    const ao = await getAoForPoint({
+      point: [longitude, latitude],
+      companyId: user.companyId
+    });
+    const aoSummary = toAoSummary(ao);
+
     // Update stored user info
     const userInfo = this.userSockets.get(socket.id);
     if (userInfo) {
@@ -168,13 +175,15 @@ class SocketService {
         type: 'Point',
         coordinates: [longitude, latitude]
       },
+      ao: aoSummary,
       timestamp: timestamp || new Date().toISOString()
     };
 
     const minimalUpdate = {
       userId: socket.userId,
       coordinates: [longitude, latitude],
-      updatedAt: user.updatedAt ? user.updatedAt.toISOString() : new Date().toISOString()
+      updatedAt: user.updatedAt ? user.updatedAt.toISOString() : new Date().toISOString(),
+      ao: aoSummary
     };
 
     await this.emitLocationUpdateToSubscribers({
@@ -450,7 +459,7 @@ class SocketService {
     }
   }
 
-  async broadcastLocationUpdate({ userId, name, email, role, coordinates, timestamp, updatedAt, excludeSocketId }) {
+  async broadcastLocationUpdate({ userId, name, email, role, coordinates, ao, timestamp, updatedAt, excludeSocketId }) {
     const locationUpdate = {
       userId,
       name,
@@ -460,13 +469,15 @@ class SocketService {
         type: 'Point',
         coordinates
       },
+      ao: ao || null,
       timestamp: timestamp || new Date().toISOString()
     };
 
     const minimalUpdate = {
       userId,
       coordinates,
-      updatedAt: updatedAt || new Date().toISOString()
+      updatedAt: updatedAt || new Date().toISOString(),
+      ao: ao || null
     };
 
     const profile = this.userProfiles.get(userId);
