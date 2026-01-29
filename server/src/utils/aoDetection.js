@@ -85,6 +85,34 @@ const distanceToPolygonMeters = (point, polygon) => {
   return Number.isFinite(minDistance) ? minDistance : null;
 };
 
+const distanceToPolygonEdgeMeters = (point, polygon) => {
+  if (!point || !polygon?.coordinates?.[0]?.length) {
+    return null;
+  }
+
+  const ring = polygon.coordinates[0];
+  if (ring.length < 2) {
+    return null;
+  }
+
+  const [lng, lat] = point;
+  const pointMeters = toMeters(lng, lat, lat);
+  let minDistance = Infinity;
+
+  for (let i = 0; i < ring.length; i += 1) {
+    const [startLng, startLat] = ring[i];
+    const [endLng, endLat] = ring[(i + 1) % ring.length];
+    const startMeters = toMeters(startLng, startLat, lat);
+    const endMeters = toMeters(endLng, endLat, lat);
+    const distance = distancePointToSegmentMeters(pointMeters, startMeters, endMeters);
+    if (distance < minDistance) {
+      minDistance = distance;
+    }
+  }
+
+  return Number.isFinite(minDistance) ? minDistance : null;
+};
+
 const isPointNearPolygon = (point, polygon, toleranceMeters = 0) => {
   const tolerance = Number(toleranceMeters) || 0;
   if (tolerance <= 0) {
@@ -172,6 +200,7 @@ const toAoSummary = (ao) => {
 module.exports = {
   isPointInPolygon,
   distanceToPolygonMeters,
+  distanceToPolygonEdgeMeters,
   isPointNearPolygon,
   getAoForPoint,
   getActiveAos,
