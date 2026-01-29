@@ -1,6 +1,6 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
-const connectDB = require('../config/db');
+const { connectDB } = require('../config/db');
 const Unit = require('../models/Unit');
 const Company = require('../models/Company');
 const Team = require('../models/Team');
