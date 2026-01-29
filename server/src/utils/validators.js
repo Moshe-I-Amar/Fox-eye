@@ -101,8 +101,14 @@ const validateAOCreate = [
     .withMessage('Name must be between 2 and 100 characters'),
   body('polygon').custom(validatePolygonShape),
   body('companyId')
+    .if((value, { req }) => req?.user?.role === 'admin')
     .isMongoId()
     .withMessage('Company ID is required'),
+  body('companyId')
+    .if((value, { req }) => req?.user?.role !== 'admin')
+    .optional()
+    .isMongoId()
+    .withMessage('Company ID must be a valid Mongo ID'),
   body('style')
     .optional()
     .isObject()
