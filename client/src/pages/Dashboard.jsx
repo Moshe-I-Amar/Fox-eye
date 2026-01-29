@@ -699,14 +699,17 @@ const Dashboard = () => {
           return;
         }
 
+        if (!currentUser?.companyId) {
+          setAoError('Company assignment is required to save this AO.');
+          return;
+        }
+
         const payload = {
           name: trimmedName,
           polygon: aoDraft.polygon,
-          style: { color: aoForm.color }
+          style: { color: aoForm.color },
+          companyId: currentUser.companyId
         };
-        if (currentUser?.role === 'admin' && currentUser?.companyId) {
-          payload.companyId = currentUser.companyId;
-        }
 
         const response = await aoService.createAO(payload);
         const createdAO = response?.data?.ao;
