@@ -1,86 +1,29 @@
 const mongoose = require('mongoose');
 const User = require('../models/User');
-const PresenceManager = require('../utils/presenceManager');
-const { filterUsersByScope, buildScopeQuery } = require('../utils/filterByScope');
-const ViolationEvent = require('../models/ViolationEvent');
 const { LocationService } = require('./locationService');
-const {
-  getActiveAos,
-  findAoForPointWithTolerance,
-  distanceToPolygonEdgeMeters
-} = require('../utils/aoDetection');
-const {
-  normalizeBounds,
-  getCellSizeForZoom,
-  getCellId,
-  getCellsForBounds,
-  isPointInBounds,
-  MAX_CELLS_PER_SUBSCRIPTION
-} = require('../utils/grid');
+const PresenceService = require('./presenceService');
+const ViewportService = require('./viewportService');
+const BreachService = require('./breachService');
+const { buildScopeQuery } = require('../utils/filterByScope');
 
 class SocketService {
   constructor(io) {
     this.io = io;
     this.locationService = new LocationService();
-    this.presenceManager = new PresenceManager();
-    this.userSockets = new Map(); // socket.id -> userInfo
-    this.userProfiles = new Map(); // userId -> userInfo
-    this.socketViewports = new Map(); // socket.id -> viewport
-    this.socketViewportRooms = new Map(); // socket.id -> Set(room)
-    this.gridCellSizeCounts = new Map(); // cellSize -> count
-    this.lastViewportUpdateAt = new Map(); // socket.id -> timestamp
-    this.viewportThrottleMs = 250;
-    this.userBreachState = new Map(); // userId -> { outsideSince, lastAlertAt, lastSafeAo }
-    this.breachConfig = {
-      gpsToleranceMeters: this.parseConfigNumber('AO_BREACH_GPS_TOLERANCE_METERS', 15),
-      graceMs: this.parseConfigNumber('AO_BREACH_GRACE_MS', 10000),
-      cooldownMs: this.parseConfigNumber('AO_BREACH_COOLDOWN_MS', 60000),
-      sustainedMs: this.parseConfigNumber('AO_BREACH_SUSTAINED_MS', 120000),
-      approachingMeters: this.parseConfigNumber('AO_APPROACHING_THRESHOLD_METERS', 50),
-      approachingCooldownMs: this.parseConfigNumber('AO_APPROACHING_COOLDOWN_MS', 30000)
-    };
+    this.presenceService = new PresenceService({ io });
+    this.viewportService = new ViewportService({ io, presenceService: this.presenceService, viewportThrottleMs: 250 });
+    this.breachService = new BreachService({
+      io,
+      emitToUser: this.presenceService.emitToUser.bind(this.presenceService),
+      emitToAdmins: this.presenceService.emitToAdmins.bind(this.presenceService)
+    });
     this.setupEventHandlers();
   }
 
   setupEventHandlers() {
     this.io.on('connection', (socket) => {
       console.log(`User connected: ${socket.userId} (${socket.id})`);
-      
-      // Store user connection
-      this.userSockets.set(socket.id, {
-        userId: socket.userId,
-        role: socket.userRole,
-        userInfo: socket.userInfo,
-        userScope: socket.userScope,
-        connectedAt: new Date()
-      });
-      this.userProfiles.set(socket.userId, socket.userInfo);
-
-      const presenceUpdate = this.presenceManager.addSocket(socket.userId, socket.id);
-      const presenceState = this.presenceManager.getPresence(socket.userId);
-
-      // Join user to their own room
-      socket.join(`user:${socket.userId}`);
-      
-      // Join admin room if user is admin
-      if (socket.userRole === 'admin') {
-        socket.join('admin');
-      }
-
-      if (presenceUpdate.wasOffline) {
-        this.io.emit('presence:update', {
-          userId: socket.userId,
-          online: true,
-          lastSeen: presenceState?.lastSeen || new Date()
-        });
-        socket.broadcast.emit('presence:user_joined', {
-          userId: socket.userId,
-          name: socket.userInfo.name,
-          email: socket.userInfo.email,
-          role: socket.userInfo.role,
-          timestamp: new Date().toISOString()
-        });
-      }
+      this.presenceService.handleConnection(socket);
 
       // Handle location updates
       socket.on('location:update', async (data) => {
@@ -103,7 +46,7 @@ class SocketService {
       // Handle user presence
       socket.on('presence:subscribe', async () => {
         try {
-          await this.handlePresenceSubscription(socket);
+          await this.presenceService.handlePresenceSubscription(socket);
         } catch (error) {
           socket.emit('error', { message: 'Failed to subscribe to presence', details: error.message });
         }
@@ -112,7 +55,7 @@ class SocketService {
       // Handle viewport subscription updates
       socket.on('viewport:subscribe', async (data) => {
         try {
-          await this.handleViewportSubscription(socket, data);
+          await this.viewportService.handleViewportSubscription(socket, data);
         } catch (error) {
           socket.emit('error', { message: 'Failed to subscribe to viewport', details: error.message });
         }
@@ -140,6 +83,7 @@ class SocketService {
 
   async handleLocationUpdate(socket, data) {
     const { coordinates, timestamp } = data;
+
     const { user, payload } = await this.locationService.updateUserLocation({
       userId: socket.userId,
       coordinates,
@@ -148,12 +92,8 @@ class SocketService {
       excludeSocketId: socket.id
     });
 
-    // Update stored user info
-    const userInfo = this.userSockets.get(socket.id);
-    if (userInfo) {
-      userInfo.userInfo = user;
-    }
-    this.userProfiles.set(socket.userId, user);
+    this.presenceService.updateSocketUserInfo(socket.id, user);
+    this.presenceService.updateUserProfile(socket.userId, user);
 
     // Confirm to sender
     socket.emit('location:updated:confirm', {
@@ -165,7 +105,7 @@ class SocketService {
 
   async handleLocationRequest(socket, data) {
     const { center, radius = 10, excludeSelf = false } = data;
-    
+
     if (!center || !Array.isArray(center) || center.length !== 2) {
       throw new Error('Invalid center coordinates');
     }
@@ -190,7 +130,7 @@ class SocketService {
     const query = queryClauses.length === 1 ? queryClauses[0] : { $and: queryClauses };
 
     // Get nearby users from database
-    const onlineUserIds = this.presenceManager
+    const onlineUserIds = this.presenceService
       .getOnlineUserIds()
       .map((id) => new mongoose.Types.ObjectId(id));
     const nearbyUsers = await User.aggregate([
@@ -230,400 +170,51 @@ class SocketService {
     });
   }
 
-  async handlePresenceSubscription(socket) {
-    // Get all connected users
-    const connectedProfiles = [];
-    const socketIdsByUser = new Map();
-    for (const userId of this.presenceManager.getOnlineUserIds()) {
-      const profile = this.userProfiles.get(userId);
-      if (!profile) {
-        continue;
-      }
-      const sockets = this.presenceManager.getSockets(userId);
-      const socketId = sockets.values().next().value || null;
-      socketIdsByUser.set(String(profile._id), socketId);
-      connectedProfiles.push(profile);
-    }
-
-    const allowedProfiles = filterUsersByScope(connectedProfiles, socket.userScope);
-    const connectedUsers = allowedProfiles.map((profile) => ({
-      userId: profile._id.toString(),
-      socketId: socketIdsByUser.get(String(profile._id)) || null,
-      name: profile.name,
-      email: profile.email,
-      role: profile.role,
-      isOnline: true,
-      lastSeen: this.presenceManager.getPresence(profile._id.toString())?.lastSeen || null,
-      location: profile.location
-    }));
-
-    socket.emit('presence:users', {
-      users: connectedUsers,
-      timestamp: new Date().toISOString()
-    });
-
-  }
-
-  async handleViewportSubscription(socket, data) {
-    const now = Date.now();
-    const lastUpdate = this.lastViewportUpdateAt.get(socket.id) || 0;
-    if (now - lastUpdate < this.viewportThrottleMs) {
-      return;
-    }
-    this.lastViewportUpdateAt.set(socket.id, now);
-
-    if (!data) {
-      throw new Error('Viewport payload is required');
-    }
-
-    const {
-      minLat,
-      minLng,
-      maxLat,
-      maxLng,
-      zoom
-    } = data;
-
-    if (![minLat, minLng, maxLat, maxLng].every((value) => Number.isFinite(value))) {
-      throw new Error('Viewport bounds must be numbers');
-    }
-
-    const normalized = normalizeBounds({ minLat, minLng, maxLat, maxLng });
-    const cellSize = getCellSizeForZoom(zoom);
-    const { cells, truncated } = getCellsForBounds(normalized, cellSize, MAX_CELLS_PER_SUBSCRIPTION);
-
-    if (truncated) {
-      console.warn(`Viewport subscription truncated for socket ${socket.id} (${cells.size} cells)`);
-    }
-
-    const previousViewport = this.socketViewports.get(socket.id);
-    if (previousViewport?.cellSize && previousViewport.cellSize !== cellSize) {
-      this.decrementCellSizeCount(previousViewport.cellSize);
-    }
-    if (!previousViewport?.cellSize || previousViewport.cellSize !== cellSize) {
-      this.incrementCellSizeCount(cellSize);
-    }
-
-    const nextRooms = cells;
-    const previousRooms = this.socketViewportRooms.get(socket.id) || new Set();
-
-    for (const room of previousRooms) {
-      if (!nextRooms.has(room)) {
-        socket.leave(room);
-      }
-    }
-
-    for (const room of nextRooms) {
-      if (!previousRooms.has(room)) {
-        socket.join(room);
-      }
-    }
-
-    this.socketViewportRooms.set(socket.id, nextRooms);
-    this.socketViewports.set(socket.id, {
-      ...normalized,
-      zoom,
-      cellSize
-    });
-  }
-
   handleDisconnect(socket) {
-    // Remove from connection maps
-    this.userSockets.delete(socket.id);
-    const presenceUpdate = this.presenceManager.removeSocket(socket.userId, socket.id);
-    const presenceState = this.presenceManager.getPresence(socket.userId);
-
-    // Notify others about user leaving
-    if (!presenceUpdate.nowOnline) {
-      this.io.emit('presence:update', {
-        userId: socket.userId,
-        online: false,
-        lastSeen: presenceState?.lastSeen || new Date()
-      });
-      this.userProfiles.delete(socket.userId);
-      this.userBreachState.delete(socket.userId);
-      socket.broadcast.emit('presence:user_left', {
-        userId: socket.userId,
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const viewport = this.socketViewports.get(socket.id);
-    if (viewport?.cellSize) {
-      this.decrementCellSizeCount(viewport.cellSize);
-    }
-    this.socketViewports.delete(socket.id);
-    this.socketViewportRooms.delete(socket.id);
-    this.lastViewportUpdateAt.delete(socket.id);
-  }
-
-  incrementCellSizeCount(cellSize) {
-    const nextCount = (this.gridCellSizeCounts.get(cellSize) || 0) + 1;
-    this.gridCellSizeCounts.set(cellSize, nextCount);
-  }
-
-  decrementCellSizeCount(cellSize) {
-    const nextCount = (this.gridCellSizeCounts.get(cellSize) || 0) - 1;
-    if (nextCount <= 0) {
-      this.gridCellSizeCounts.delete(cellSize);
-    } else {
-      this.gridCellSizeCounts.set(cellSize, nextCount);
-    }
-  }
-
-  async emitLocationUpdateToSubscribers({ payload, excludeSocketId }) {
-    const [longitude, latitude] = payload.coordinates;
-    const candidateSockets = new Map();
-    const targetProfile = this.userProfiles.get(payload.userId);
-
-    if (!targetProfile) {
-      return;
-    }
-
-    for (const cellSize of this.gridCellSizeCounts.keys()) {
-      const room = getCellId(latitude, longitude, cellSize);
-      const sockets = await this.io.in(room).fetchSockets();
-      for (const socket of sockets) {
-        candidateSockets.set(socket.id, socket);
-      }
-    }
-
-    for (const socket of candidateSockets.values()) {
-      if (excludeSocketId && socket.id === excludeSocketId) {
-        continue;
-      }
-      const viewport = this.socketViewports.get(socket.id);
-      if (!viewport) {
-        continue;
-      }
-      if (!isPointInBounds(viewport, latitude, longitude)) {
-        continue;
-      }
-      const recipientInfo = this.userSockets.get(socket.id);
-      if (!recipientInfo) {
-        continue;
-      }
-      const isSelf = recipientInfo.userId === payload.userId;
-      if (!isSelf && filterUsersByScope([targetProfile], recipientInfo.userScope).length === 0) {
-        continue;
-      }
-      socket.emit('location:update', payload);
-      socket.emit('location:updated', payload);
-    }
-
-    for (const [socketId, recipientInfo] of this.userSockets.entries()) {
-      if (recipientInfo.role !== 'admin') {
-        continue;
-      }
-      const isSelf = recipientInfo.userId === payload.userId;
-      if (!isSelf && filterUsersByScope([targetProfile], recipientInfo.userScope).length === 0) {
-        continue;
-      }
-      this.io.to(socketId).emit('admin:location:updated', payload);
-    }
-  }
-
-  parseConfigNumber(envKey, fallback) {
-    const raw = process.env[envKey];
-    const parsed = Number(raw);
-    if (Number.isFinite(parsed) && parsed >= 0) {
-      return parsed;
-    }
-    return fallback;
-  }
-
-  async evaluateAoBreach({ user, coordinates, timestamp }) {
-    if (!user || !coordinates || coordinates.length !== 2) {
-      return;
-    }
-
-    const companyId = user.companyId;
-    if (!companyId) {
-      return;
-    }
-
-    const activeAos = await getActiveAos({ companyId });
-    if (!activeAos || activeAos.length === 0) {
-      this.userBreachState.delete(user._id.toString());
-      return;
-    }
-
-    const point = [coordinates[0], coordinates[1]];
-    const toleranceMeters = this.breachConfig.gpsToleranceMeters;
-    const insideAo = findAoForPointWithTolerance(point, activeAos, toleranceMeters);
-    const userId = user._id.toString();
-    const now = Date.now();
-
-    const state = this.userBreachState.get(userId) || {
-      outsideSince: null,
-      lastAlertAt: 0,
-      lastSafeAo: null,
-      lastApproachAt: 0,
-      lastSustainedAt: 0
-    };
-
-    if (insideAo) {
-      const distanceToBoundary = distanceToPolygonEdgeMeters(point, insideAo.polygon);
-      const shouldNotifyApproach =
-        Number.isFinite(distanceToBoundary) &&
-        distanceToBoundary <= this.breachConfig.approachingMeters &&
-        now - (state.lastApproachAt || 0) >= this.breachConfig.approachingCooldownMs;
-
-      if (shouldNotifyApproach) {
-        state.lastApproachAt = now;
-        await this.createViolationEvent({
-          type: 'APPROACHING_BOUNDARY',
-          user,
-          coordinates,
-          ao: insideAo,
-          distanceToBoundaryMeters: distanceToBoundary,
-          timestamp: timestamp || new Date().toISOString()
-        });
-      }
-
-      state.outsideSince = null;
-      state.lastSafeAo = {
-        id: insideAo._id?.toString?.() || String(insideAo._id),
-        name: insideAo.name
-      };
-      state.lastSustainedAt = 0;
-      this.userBreachState.set(userId, state);
-      return;
-    }
-
-    if (!state.outsideSince) {
-      state.outsideSince = now;
-      this.userBreachState.set(userId, state);
-      return;
-    }
-
-    if (now - state.outsideSince < this.breachConfig.graceMs) {
-      this.userBreachState.set(userId, state);
-      return;
-    }
-
-    if (now - (state.lastAlertAt || 0) < this.breachConfig.cooldownMs) {
-      this.userBreachState.set(userId, state);
-      return;
-    }
-
-    state.lastAlertAt = now;
-    this.userBreachState.set(userId, state);
-
-    await this.createViolationEvent({
-      type: 'BREACH',
-      user,
-      coordinates,
-      ao: state.lastSafeAo,
-      breachSince: new Date(state.outsideSince).toISOString(),
-      timestamp: timestamp || new Date().toISOString()
-    });
-
-    if (
-      now - state.outsideSince >= this.breachConfig.sustainedMs &&
-      now - (state.lastSustainedAt || 0) >= this.breachConfig.cooldownMs
-    ) {
-      state.lastSustainedAt = now;
-      this.userBreachState.set(userId, state);
-
-      await this.createViolationEvent({
-        type: 'SUSTAINED_BREACH',
-        user,
-        coordinates,
-        ao: state.lastSafeAo,
-        breachSince: new Date(state.outsideSince).toISOString(),
-        timestamp: timestamp || new Date().toISOString()
-      });
-    }
-
-    const payload = {
-      userId,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      coordinates,
-      timestamp: timestamp || new Date().toISOString(),
-      breachSince: new Date(state.outsideSince).toISOString(),
-      ao: state.lastSafeAo,
-      toleranceMeters: this.breachConfig.gpsToleranceMeters,
-      graceMs: this.breachConfig.graceMs,
-      cooldownMs: this.breachConfig.cooldownMs
-    };
-
-    this.io.to('admin').emit('ao:breach', payload);
-    this.emitToUser(userId, 'ao:breach', payload);
-  }
-
-  async createViolationEvent({ type, user, coordinates, ao, distanceToBoundaryMeters, breachSince, timestamp }) {
-    if (!user?._id || !Array.isArray(coordinates) || coordinates.length !== 2) {
-      return;
-    }
-
-    const aoId = ao?._id || ao?.id || null;
-    const aoName = ao?.name || null;
-    const occurredAt = new Date(timestamp || Date.now());
-
-    try {
-      await ViolationEvent.create({
-        type,
-        userId: user._id,
-        companyId: user.companyId,
-        unitId: user.unitId,
-        teamId: user.teamId,
-        squadId: user.squadId,
-        aoId,
-        aoName,
-        coordinates,
-        distanceToBoundaryMeters: Number.isFinite(distanceToBoundaryMeters)
-          ? distanceToBoundaryMeters
-          : null,
-        breachSince: breachSince ? new Date(breachSince) : null,
-        occurredAt
-      });
-    } catch (error) {
-      console.warn('Failed to create violation event:', error.message);
-    }
+    this.presenceService.handleDisconnect(socket);
+    this.viewportService.handleDisconnect(socket);
+    this.breachService.clearUserState(socket.userId);
   }
 
   async broadcastLocationUpdate({ payload, excludeSocketId }) {
-    const profile = this.userProfiles.get(payload.userId);
+    if (!payload) {
+      return;
+    }
+
+    const profile = this.presenceService.getUserProfile(payload.userId);
     if (profile) {
       profile.location = payload.location;
     }
 
-    await this.emitLocationUpdateToSubscribers({
-      payload,
+    const minimalUpdate = {
+      userId: payload.userId,
+      coordinates: payload.coordinates,
+      updatedAt: payload.updatedAt,
+      ao: payload.ao || null
+    };
+
+    await this.viewportService.emitLocationUpdateToSubscribers({
+      minimalUpdate,
+      locationUpdate: payload,
       excludeSocketId
     });
   }
 
+  async evaluateAoBreach({ user, coordinates, timestamp }) {
+    return this.breachService.evaluateAoBreach({ user, coordinates, timestamp });
+  }
+
   // Utility methods
   emitToUser(userId, event, data) {
-    const sockets = this.presenceManager.getSockets(userId);
-    if (!sockets || sockets.size === 0) {
-      return false;
-    }
-    for (const socketId of sockets) {
-      this.io.to(socketId).emit(event, data);
-    }
-    return true;
+    return this.presenceService.emitToUser(userId, event, data);
   }
 
   emitToAdmins(event, data) {
-    this.io.to('admin').emit(event, data);
+    this.presenceService.emitToAdmins(event, data);
   }
 
   getConnectedUsers() {
-    const users = [];
-    for (const [socketId, userInfo] of this.userSockets.entries()) {
-      users.push({
-        userId: userInfo.userId,
-        socketId,
-        role: userInfo.role,
-        connectedAt: userInfo.connectedAt
-      });
-    }
-    return users;
+    return this.presenceService.getConnectedUsers();
   }
 }
 
