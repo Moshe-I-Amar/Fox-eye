@@ -464,6 +464,9 @@ const Dashboard = () => {
   const [realtimeNoticeTone, setRealtimeNoticeTone] = useState('warning');
   const [liveUpdateIds, setLiveUpdateIds] = useState(new Set());
   const liveUpdateTimers = useRef(new Map());
+  const realtimeEnabledRef = useRef(realtimeEnabled);
+  const hasCenteredMapRef = useRef(false);
+  const lastLocationSentRef = useRef({ time: 0, coords: null });
   const [viewportBounds, setViewportBounds] = useState(null);
   const [aos, setAos] = useState([]);
   const [aoLoading, setAoLoading] = useState(false);
@@ -577,6 +580,10 @@ const Dashboard = () => {
       socketClient.disconnect();
     };
   }, [navigate]);
+
+  useEffect(() => {
+    realtimeEnabledRef.current = realtimeEnabled;
+  }, [realtimeEnabled]);
 
   useEffect(() => {
     return () => {
@@ -980,7 +987,7 @@ const Dashboard = () => {
     };
   }, [realtimeEnabled, onlineUsers]);
 
-  const handleUseMyLocation = () => {
+  useEffect(() => {
     setLocationLoading(true);
     setLocationError('');
 
@@ -990,40 +997,70 @@ const Dashboard = () => {
       return;
     }
 
-    navigator.geolocation.getCurrentPosition(
+    const shouldSendLocation = (nextCoords) => {
+      const last = lastLocationSentRef.current;
+      const now = Date.now();
+      if (!last.coords) {
+        return true;
+      }
+      const [prevLat, prevLng] = last.coords;
+      const [nextLat, nextLng] = nextCoords;
+      const moved =
+        Math.abs(prevLat - nextLat) > 0.00005 ||
+        Math.abs(prevLng - nextLng) > 0.00005;
+      const timeElapsed = now - last.time > 8000;
+      return moved || timeElapsed;
+    };
+
+    const sendLocation = async (latitude, longitude) => {
+      const nextCoords = [latitude, longitude];
+      if (!shouldSendLocation(nextCoords)) {
+        return;
+      }
+
+      lastLocationSentRef.current = { time: Date.now(), coords: nextCoords };
+
+      try {
+        if (realtimeEnabledRef.current && socketClient.isSocketConnected()) {
+          socketClient.updateLocation([longitude, latitude]);
+        } else {
+          await userService.updateMyLocation([longitude, latitude]);
+        }
+      } catch (error) {
+        console.error('Error updating location:', error);
+        setLocationError('Failed to update location. Please try again.');
+      }
+    };
+
+    const watchId = navigator.geolocation.watchPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
         const newLocation = [latitude, longitude];
         setUserLocation(newLocation);
-        setMapCenter(newLocation);
-        
-        try {
-          // Update location via socket if available, otherwise HTTP
-          if (realtimeEnabled && socketClient.isSocketConnected()) {
-            socketClient.updateLocation([longitude, latitude]);
-            console.log('Location updated via socket');
-          } else {
-            await userService.updateMyLocation([longitude, latitude]);
-            console.log('Location updated via HTTP');
-          }
-        } catch (error) {
-          console.error('Error updating location:', error);
-          setLocationError('Failed to update location. Please try again.');
+
+        if (!hasCenteredMapRef.current) {
+          setMapCenter(newLocation);
+          hasCenteredMapRef.current = true;
         }
-        
+
+        await sendLocation(latitude, longitude);
         setLocationLoading(false);
       },
-      (error) => {
+      () => {
         setLocationError('Unable to retrieve your location. Please enable location services.');
         setLocationLoading(false);
       },
       {
         enableHighAccuracy: true,
         timeout: 10000,
-        maximumAge: 600000 // 10 minutes
+        maximumAge: 5000
       }
     );
-  };
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, []);
 
   const handleRadiusChange = (newRadius) => {
     setRadius(newRadius);
@@ -1104,14 +1141,9 @@ const Dashboard = () => {
           {/* Location Controls */}
           <Card className="mb-6" padding="small">
             <div className="space-y-4">
-              <Button
-                onClick={handleUseMyLocation}
-                disabled={locationLoading}
-                className="w-full"
-                variant="outline"
-              >
-                {locationLoading ? 'Getting Location...' : 'Use My Location'}
-              </Button>
+              <div className="rounded-lg border border-gold/20 bg-gold/10 px-3 py-2 text-xs text-gold/80">
+                {locationLoading ? 'Detecting your live location…' : 'Live location updates are active.'}
+              </div>
               
               {locationError && (
                 <p className="text-red-400 text-sm">{locationError}</p>
