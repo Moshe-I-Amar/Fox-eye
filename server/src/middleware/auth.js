@@ -12,13 +12,22 @@ const auth = asyncHandler(async (req, res, next) => {
   }
 
   const decoded = jwt.verify(token, process.env.JWT_SECRET);
-  const user = await User.findById(decoded.id);
+  const user = await User.findById(decoded.id).select('-password');
 
   if (!user) {
     throw new AppError('AUTH_INVALID_TOKEN', 'Invalid token. User not found.', 401);
   }
 
-  req.user = user;
+  req.userDoc = user;
+  req.user = {
+    id: user._id.toString(),
+    role: user.role,
+    operationalRole: user.operationalRole,
+    unitId: user.unitId,
+    companyId: user.companyId,
+    teamId: user.teamId,
+    squadId: user.squadId
+  };
   req.scope = await resolveUserScope(user);
   next();
 });

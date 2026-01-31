@@ -6,7 +6,7 @@ const {
 } = require('../utils/aoDetection');
 
 class BreachService {
-  constructor({ io, emitToUser, emitToAdmins, violationModel, aoDetection, configOverrides } = {}) {
+  constructor({ io, emitToUser, emitToAdmins, emitToScope, violationModel, aoDetection, configOverrides } = {}) {
     if (!io) {
       throw new Error('BreachService requires a socket.io instance');
     }
@@ -19,6 +19,7 @@ class BreachService {
     this.io = io;
     this.emitToUser = emitToUser;
     this.emitToAdmins = emitToAdmins;
+    this.emitToScope = emitToScope;
     this.violationModel = violationModel || ViolationEvent;
     this.aoDetection = {
       getActiveAos: detection.getActiveAos || getActiveAos,
@@ -171,8 +172,12 @@ class BreachService {
       cooldownMs: this.breachConfig.cooldownMs
     };
 
-    this.emitToAdmins('ao:breach', payload);
-    this.emitToUser(userId, 'ao:breach', payload);
+    if (this.emitToScope) {
+      this.emitToScope(user, 'ao:breach', payload);
+    } else {
+      this.emitToAdmins('ao:breach', payload);
+      this.emitToUser(userId, 'ao:breach', payload);
+    }
   }
 
   async createViolationEvent({ type, user, coordinates, ao, distanceToBoundaryMeters, breachSince, timestamp }) {

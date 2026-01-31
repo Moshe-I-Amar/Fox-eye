@@ -12,25 +12,34 @@ const getAllUsers = asyncHandler(async (req, res) => {
   const limit = parseInt(req.query.limit) || 10;
   const skip = (page - 1) * limit;
 
-  const users = await User.find()
+  const scopeQuery = buildScopeQuery(req.scope);
+  if (!scopeQuery) {
+    const emptyPagination = { page, limit, total: 0, pages: 0 };
+    return res.json({
+      success: true,
+      data: { users: [], pagination: emptyPagination },
+      pagination: emptyPagination
+    });
+  }
+
+  const users = await User.find(scopeQuery)
     .select('-password')
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit);
 
-  const total = await User.countDocuments();
+  const total = await User.countDocuments(scopeQuery);
+  const pagination = {
+    page,
+    limit,
+    total,
+    pages: Math.ceil(total / limit)
+  };
 
   res.json({
     success: true,
-    data: {
-      users,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit)
-      }
-    }
+    data: { users, pagination },
+    pagination
   });
 });
 
@@ -128,7 +137,7 @@ const updateMyLocation = asyncHandler(async (req, res) => {
   }
   const socketId = req.headers['x-socket-id'];
   const { user, ao } = await locationService.updateUserLocation({
-    user: req.user,
+    userId: req.user?.id,
     coordinates,
     socketService,
     excludeSocketId: socketId,

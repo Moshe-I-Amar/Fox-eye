@@ -6,6 +6,16 @@ const { AppError } = require('../utils/errors');
 const isAdmin = (user) => user?.role === 'admin';
 const isCompanyCommander = (user) => user?.operationalRole === 'COMPANY_COMMANDER';
 
+const resolveCompanyScope = (req) => {
+  if (req?.scope?.companies?.length) {
+    return req.scope.companies;
+  }
+  if (req?.user?.companyId) {
+    return [req.user.companyId];
+  }
+  return [];
+};
+
 const hasCompanyAccess = (user, companyId) => {
   if (isAdmin(user)) {
     return true;
@@ -23,17 +33,25 @@ const hasCompanyAccess = (user, companyId) => {
 };
 
 const listAOs = asyncHandler(async (req, res) => {
-  const isAdminUser = isAdmin(req.user);
   const requestedCompanyId = req.query.companyId;
-  const companyId = isAdminUser ? requestedCompanyId : req.user?.companyId;
+  const allowedCompanyIds = resolveCompanyScope(req);
 
-  if (!isAdminUser && requestedCompanyId && String(requestedCompanyId) !== String(req.user?.companyId)) {
+  if (allowedCompanyIds.length === 0) {
+    return res.json({
+      success: true,
+      data: { aos: [] }
+    });
+  }
+
+  if (requestedCompanyId && !allowedCompanyIds.some((id) => String(id) === String(requestedCompanyId))) {
     throw new AppError('FORBIDDEN', 'Access denied. Insufficient permissions.', 403);
   }
 
   const query = {};
-  if (companyId) {
-    query.companyId = companyId;
+  if (requestedCompanyId) {
+    query.companyId = requestedCompanyId;
+  } else if (allowedCompanyIds.length) {
+    query.companyId = { $in: allowedCompanyIds };
   }
   if (req.query.active !== undefined) {
     query.active = String(req.query.active) === 'true';
@@ -52,7 +70,7 @@ const createAO = asyncHandler(async (req, res) => {
     throw new AppError('FORBIDDEN', 'Access denied. Insufficient permissions.', 403);
   }
 
-  const { name, polygon, style, companyId: requestedCompanyId } = req.body;
+  const { name, polygon, companyId: requestedCompanyId } = req.body;
   const companyId = isAdmin(req.user)
     ? requestedCompanyId
     : (requestedCompanyId || req.user.companyId);
@@ -74,7 +92,11 @@ const createAO = asyncHandler(async (req, res) => {
     name,
     polygon,
     companyId,
-    style: style || undefined
+    style: {
+      color: company.color,
+      pattern: company.pattern,
+      icon: company.icon
+    }
   });
 
   res.status(201).json({
@@ -110,17 +132,7 @@ const updateAO = asyncHandler(async (req, res) => {
   if (polygon !== undefined) {
     updates.polygon = polygon;
   }
-  if (style !== undefined) {
-    if (Object.prototype.hasOwnProperty.call(style, 'color')) {
-      updates['style.color'] = style.color;
-    }
-    if (Object.prototype.hasOwnProperty.call(style, 'pattern')) {
-      updates['style.pattern'] = style.pattern;
-    }
-    if (Object.prototype.hasOwnProperty.call(style, 'icon')) {
-      updates['style.icon'] = style.icon;
-    }
-  }
+  const wantsStyleUpdate = style !== undefined;
   if (companyId !== undefined) {
     updates.companyId = companyId;
   }
@@ -129,11 +141,19 @@ const updateAO = asyncHandler(async (req, res) => {
     throw new AppError('VALIDATION_ERROR', 'No valid fields provided for update', 400);
   }
 
-  if (updates.companyId && isAdmin(req.user)) {
-    const company = await Company.findById(updates.companyId).lean();
+  if (updates.companyId && !isAdmin(req.user)) {
+    throw new AppError('FORBIDDEN', 'Access denied. Cannot change company assignment.', 403);
+  }
+
+  if (wantsStyleUpdate || updates.companyId) {
+    const targetCompanyId = updates.companyId || ao.companyId;
+    const company = await Company.findById(targetCompanyId).lean();
     if (!company) {
       throw new AppError('NOT_FOUND', 'Company not found', 404);
     }
+    updates['style.color'] = company.color;
+    updates['style.pattern'] = company.pattern;
+    updates['style.icon'] = company.icon;
   }
 
   const updatedAO = await AO.findByIdAndUpdate(

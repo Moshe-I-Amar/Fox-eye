@@ -7,6 +7,10 @@ class SocketService {
     this.eventHandlers = new Map();
     this.authFailed = false;
     this.maxReconnectAttempts = 5;
+    this.lastLocationEmitAt = 0;
+    this.lastViewportEmitAt = 0;
+    this.locationCooldownMs = 400;
+    this.viewportCooldownMs = 250;
   }
 
   connect(token) {
@@ -183,6 +187,11 @@ class SocketService {
     if (!this.socket || !this.isConnected) {
       throw new Error('Socket not connected');
     }
+    const now = Date.now();
+    if (now - this.lastLocationEmitAt < this.locationCooldownMs) {
+      return;
+    }
+    this.lastLocationEmitAt = now;
 
     this.socket.emit('location:update', {
       coordinates,
@@ -214,6 +223,11 @@ class SocketService {
     if (!this.socket || !this.isConnected) {
       throw new Error('Socket not connected');
     }
+    const now = Date.now();
+    if (now - this.lastViewportEmitAt < this.viewportCooldownMs) {
+      return;
+    }
+    this.lastViewportEmitAt = now;
 
     this.socket.emit('viewport:subscribe', viewport);
   }

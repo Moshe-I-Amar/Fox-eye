@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import AdminRoute from './components/layout/AdminRoute';
@@ -6,8 +6,51 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Admin from './pages/Admin';
+import { authService } from './services/authApi';
 
 function App() {
+  const [authReady, setAuthReady] = useState(false);
+
+  useEffect(() => {
+    let isActive = true;
+    const token = localStorage.getItem('token');
+
+    if (!token) {
+      setAuthReady(true);
+      return () => {
+        isActive = false;
+      };
+    }
+
+    const bootstrapAuth = async () => {
+      try {
+        const response = await authService.getMe();
+        if (!isActive) return;
+        authService.setAuthData(token, response.user);
+      } catch (error) {
+        authService.logout();
+      } finally {
+        if (isActive) {
+          setAuthReady(true);
+        }
+      }
+    };
+
+    bootstrapAuth();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-gold">
+        Loading session...
+      </div>
+    );
+  }
+
   return (
     <div className="App">
       <Routes>

@@ -22,6 +22,21 @@ const companySchema = new mongoose.Schema(
     active: {
       type: Boolean,
       default: true
+    },
+    color: {
+      type: String,
+      trim: true,
+      default: '#C7A76C'
+    },
+    pattern: {
+      type: String,
+      trim: true,
+      default: null
+    },
+    icon: {
+      type: String,
+      trim: true,
+      default: null
     }
   },
   {

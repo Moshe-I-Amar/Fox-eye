@@ -24,6 +24,9 @@ class ViewportService {
     this.gridCellSizeCounts = new Map(); // cellSize -> count
     this.lastViewportUpdateAt = new Map(); // socket.id -> timestamp
     this.viewportThrottleMs = viewportThrottleMs;
+    this.viewportRateLimits = new Map(); // socket.id -> { windowStart, count }
+    this.viewportWindowMs = Number(process.env.SOCKET_VIEWPORT_WINDOW_MS) || 10000;
+    this.viewportMaxPerWindow = Number(process.env.SOCKET_VIEWPORT_MAX_PER_WINDOW) || 40;
   }
 
   async handleViewportSubscription(socket, data) {
@@ -33,6 +36,9 @@ class ViewportService {
       return;
     }
     this.lastViewportUpdateAt.set(socket.id, now);
+    if (!this.allowViewportUpdate(socket.id, now)) {
+      return;
+    }
 
     if (!data) {
       throw new Error('Viewport payload is required');
@@ -97,6 +103,23 @@ class ViewportService {
     this.socketViewports.delete(socket.id);
     this.socketViewportRooms.delete(socket.id);
     this.lastViewportUpdateAt.delete(socket.id);
+    this.viewportRateLimits.delete(socket.id);
+  }
+
+  allowViewportUpdate(socketId, now = Date.now()) {
+    const state = this.viewportRateLimits.get(socketId) || {
+      windowStart: now,
+      count: 0
+    };
+
+    if (now - state.windowStart > this.viewportWindowMs) {
+      state.windowStart = now;
+      state.count = 0;
+    }
+
+    state.count += 1;
+    this.viewportRateLimits.set(socketId, state);
+    return state.count <= this.viewportMaxPerWindow;
   }
 
   incrementCellSizeCount(cellSize) {

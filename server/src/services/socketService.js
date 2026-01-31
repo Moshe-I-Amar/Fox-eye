@@ -15,8 +15,13 @@ class SocketService {
     this.breachService = new BreachService({
       io,
       emitToUser: this.presenceService.emitToUser.bind(this.presenceService),
-      emitToAdmins: this.presenceService.emitToAdmins.bind(this.presenceService)
+      emitToAdmins: this.presenceService.emitToAdmins.bind(this.presenceService),
+      emitToScope: this.presenceService.emitToAuthorized.bind(this.presenceService)
     });
+    this.locationRateLimits = new Map(); // socket.id -> { windowStart, count, lastAt }
+    this.locationWindowMs = Number(process.env.SOCKET_LOCATION_WINDOW_MS) || 10000;
+    this.locationMaxPerWindow = Number(process.env.SOCKET_LOCATION_MAX_PER_WINDOW) || 25;
+    this.locationMinIntervalMs = Number(process.env.SOCKET_LOCATION_MIN_INTERVAL_MS) || 400;
     this.setupEventHandlers();
   }
 
@@ -83,6 +88,10 @@ class SocketService {
 
   async handleLocationUpdate(socket, data) {
     const { coordinates, timestamp } = data;
+    if (!this.allowLocationUpdate(socket.id)) {
+      socket.emit('error', { message: 'Location update rate limit exceeded' });
+      return;
+    }
 
     const { user, payload } = await this.locationService.updateUserLocation({
       userId: socket.userId,
@@ -174,6 +183,31 @@ class SocketService {
     this.presenceService.handleDisconnect(socket);
     this.viewportService.handleDisconnect(socket);
     this.breachService.clearUserState(socket.userId);
+    this.locationRateLimits.delete(socket.id);
+  }
+
+  allowLocationUpdate(socketId) {
+    const now = Date.now();
+    const state = this.locationRateLimits.get(socketId) || {
+      windowStart: now,
+      count: 0,
+      lastAt: 0
+    };
+
+    if (now - state.lastAt < this.locationMinIntervalMs) {
+      return false;
+    }
+
+    if (now - state.windowStart > this.locationWindowMs) {
+      state.windowStart = now;
+      state.count = 0;
+    }
+
+    state.count += 1;
+    state.lastAt = now;
+    this.locationRateLimits.set(socketId, state);
+
+    return state.count <= this.locationMaxPerWindow;
   }
 
   async broadcastLocationUpdate({ payload, excludeSocketId }) {

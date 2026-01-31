@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authApi';
 import { userService } from '../services/usersApi';
+import { hierarchyService } from '../services/hierarchyApi';
 import socketService from '../services/socketService';
 import { isValidCoords, safeGetCoords } from '../utils/location';
 import Button from '../components/ui/Button';
@@ -27,6 +28,12 @@ const Admin = () => {
   const [realtimeNotice, setRealtimeNotice] = useState('');
   const [realtimeNoticeTone, setRealtimeNoticeTone] = useState('warning');
   const [breachAlerts, setBreachAlerts] = useState([]);
+  const [hierarchyMap, setHierarchyMap] = useState({
+    units: {},
+    companies: {},
+    teams: {},
+    squads: {}
+  });
   const breachTimersRef = useRef(new Map());
   const navigate = useNavigate();
 
@@ -240,6 +247,35 @@ const Admin = () => {
   useEffect(() => {
     fetchUsers();
   }, [pagination.page, pagination.limit]);
+
+  useEffect(() => {
+    let isActive = true;
+    const loadHierarchy = async () => {
+      try {
+        const data = await hierarchyService.getTree();
+        if (!isActive) return;
+        const units = {};
+        const companies = {};
+        const teams = {};
+        const squads = {};
+
+        (data.units || []).forEach((unit) => { units[unit._id] = unit.name; });
+        (data.companies || []).forEach((company) => { companies[company._id] = company.name; });
+        (data.teams || []).forEach((team) => { teams[team._id] = team.name; });
+        (data.squads || []).forEach((squad) => { squads[squad._id] = squad.name; });
+
+        setHierarchyMap({ units, companies, teams, squads });
+      } catch (error) {
+        console.warn('Failed to load hierarchy metadata:', error);
+      }
+    };
+
+    loadHierarchy();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -583,6 +619,28 @@ const Admin = () => {
               <p className="text-gold">
                 {formatTimestamp(selectedUser.lastUpdateAt || selectedUser.lastSeen || selectedUser.updatedAt)}
               </p>
+            </Card>
+
+            <Card glass>
+              <p className="text-gold/60 text-sm mb-3">Hierarchy</p>
+              <div className="space-y-2 text-sm text-gold">
+                <div className="flex justify-between">
+                  <span className="text-gold/60">Unit:</span>
+                  <span>{hierarchyMap.units[selectedUser.unitId] || selectedUser.unitId || 'Unassigned'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gold/60">Company:</span>
+                  <span>{hierarchyMap.companies[selectedUser.companyId] || selectedUser.companyId || 'Unassigned'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gold/60">Team:</span>
+                  <span>{hierarchyMap.teams[selectedUser.teamId] || selectedUser.teamId || 'Unassigned'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gold/60">Squad:</span>
+                  <span>{hierarchyMap.squads[selectedUser.squadId] || selectedUser.squadId || 'Unassigned'}</span>
+                </div>
+              </div>
             </Card>
           </div>
         )}

@@ -3,6 +3,7 @@ const errorHandler = (err, req, res, next) => {
 
   const requestId = req.id || req.header('x-request-id');
   const response = {
+    success: false,
     error: {
       code: 'INTERNAL_SERVER_ERROR',
       message: 'Internal Server Error'

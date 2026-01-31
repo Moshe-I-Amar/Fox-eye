@@ -5,6 +5,9 @@ class PresenceManager {
     this.presence = new Map(); // userId -> { sockets:Set, lastSeen:Date, online:boolean }
     this.offlineWriteDelayMs = offlineWriteDelayMs;
     this.offlineWriteTimers = new Map();
+    this.pendingUpdates = new Map();
+    this.flushTimer = null;
+    this.flushIntervalMs = 1000;
   }
 
   getPresence(userId) {
@@ -104,8 +107,34 @@ class PresenceManager {
   }
 
   persistPresence(userId, online, lastSeen) {
-    User.findByIdAndUpdate(userId, { online, lastSeen }).catch((error) => {
-      console.error(`Failed to persist presence for user ${userId}:`, error);
+    this.pendingUpdates.set(userId, { online, lastSeen });
+    this.scheduleFlush();
+  }
+
+  scheduleFlush() {
+    if (this.flushTimer) {
+      return;
+    }
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flushUpdates();
+    }, this.flushIntervalMs);
+  }
+
+  flushUpdates() {
+    const updates = Array.from(this.pendingUpdates.entries());
+    if (!updates.length) {
+      return;
+    }
+    this.pendingUpdates.clear();
+    const ops = updates.map(([userId, payload]) => ({
+      updateOne: {
+        filter: { _id: userId },
+        update: { $set: payload }
+      }
+    }));
+    User.bulkWrite(ops).catch((error) => {
+      console.error('Failed to persist presence batch:', error);
     });
   }
 }

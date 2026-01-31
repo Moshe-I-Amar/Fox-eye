@@ -22,17 +22,21 @@ const validateRegister = [
     .isLength({ min: 6 })
     .withMessage('Password must be at least 6 characters'),
   body('unitId')
+    .optional()
     .isMongoId()
-    .withMessage('Unit ID is required'),
+    .withMessage('Unit ID must be a valid Mongo ID'),
   body('companyId')
+    .optional()
     .isMongoId()
-    .withMessage('Company ID is required'),
+    .withMessage('Company ID must be a valid Mongo ID'),
   body('teamId')
+    .optional()
     .isMongoId()
-    .withMessage('Team ID is required'),
+    .withMessage('Team ID must be a valid Mongo ID'),
   body('squadId')
+    .optional()
     .isMongoId()
-    .withMessage('Squad ID is required'),
+    .withMessage('Squad ID must be a valid Mongo ID'),
   handleValidationErrors
 ];
 
@@ -74,18 +78,41 @@ const validatePolygonShape = (polygon, { req }) => {
     throw new Error('Polygon coordinates are required');
   }
 
-  const isValid = coordinates.every((ring) =>
-    Array.isArray(ring) &&
-    ring.length > 0 &&
-    ring.every((point) =>
-      Array.isArray(point) &&
-      point.length >= 2 &&
-      point.every((value) => typeof value === 'number' && Number.isFinite(value))
-    )
-  );
+  const MAX_RING_POINTS = 2000;
+
+  const isValid = coordinates.every((ring) => {
+    if (!Array.isArray(ring) || ring.length < 4) {
+      return false;
+    }
+    if (ring.length > MAX_RING_POINTS) {
+      throw new Error(`Polygon ring exceeds ${MAX_RING_POINTS} points`);
+    }
+    const first = ring[0];
+    const last = ring[ring.length - 1];
+    if (!Array.isArray(first) || !Array.isArray(last) || first.length < 2 || last.length < 2) {
+      return false;
+    }
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+      throw new Error('Polygon ring must be closed');
+    }
+
+    return ring.every((point) => {
+      if (!Array.isArray(point) || point.length < 2) {
+        return false;
+      }
+      const [lng, lat] = point;
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+        return false;
+      }
+      if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+        throw new Error('Polygon coordinates must be [longitude, latitude] within valid ranges');
+      }
+      return true;
+    });
+  });
 
   if (!isValid) {
-    throw new Error('Polygon coordinates must be an array of coordinate pairs');
+    throw new Error('Polygon coordinates must be an array of valid coordinate pairs');
   }
 
   return true;

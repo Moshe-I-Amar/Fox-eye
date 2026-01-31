@@ -46,7 +46,7 @@ const Login = () => {
       authService.setAuthData(response.token, response.user);
       navigate(from, { replace: true });
     } catch (error) {
-      const message = error.response?.data?.message || 'Login failed';
+      const message = error.response?.data?.error?.message || 'Login failed';
       setErrors({ form: message });
     } finally {
       setLoading(false);

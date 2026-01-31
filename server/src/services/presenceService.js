@@ -32,18 +32,18 @@ class PresenceService {
     }
 
     if (presenceUpdate.wasOffline) {
-      this.io.emit('presence:update', {
+      this.emitPresenceEvent(socket.userInfo, 'presence:update', {
         userId: socket.userId,
         online: true,
         lastSeen: presenceState?.lastSeen || new Date()
       });
-      socket.broadcast.emit('presence:user_joined', {
+      this.emitPresenceEvent(socket.userInfo, 'presence:user_joined', {
         userId: socket.userId,
         name: socket.userInfo.name,
         email: socket.userInfo.email,
         role: socket.userInfo.role,
         timestamp: new Date().toISOString()
-      });
+      }, { includeSelf: false });
     }
 
     return { presenceUpdate, presenceState };
@@ -55,16 +55,16 @@ class PresenceService {
     const presenceState = this.presenceManager.getPresence(socket.userId);
 
     if (!presenceUpdate.nowOnline) {
-      this.io.emit('presence:update', {
+      this.emitPresenceEvent(socket.userInfo, 'presence:update', {
         userId: socket.userId,
         online: false,
         lastSeen: presenceState?.lastSeen || new Date()
       });
       this.userProfiles.delete(socket.userId);
-      socket.broadcast.emit('presence:user_left', {
+      this.emitPresenceEvent(socket.userInfo, 'presence:user_left', {
         userId: socket.userId,
         timestamp: new Date().toISOString()
-      });
+      }, { includeSelf: false });
     }
 
     return { presenceUpdate, presenceState };
@@ -149,6 +149,27 @@ class PresenceService {
 
   emitToAdmins(event, data) {
     this.io.to('admin').emit(event, data);
+  }
+
+  emitPresenceEvent(targetProfile, event, payload, { includeSelf = true } = {}) {
+    if (!targetProfile) {
+      return;
+    }
+
+    for (const [socketId, recipientInfo] of this.userSockets.entries()) {
+      const isSelf = recipientInfo.userId === targetProfile._id?.toString?.();
+      if (!includeSelf && isSelf) {
+        continue;
+      }
+      if (!isSelf && filterUsersByScope([targetProfile], recipientInfo.userScope).length === 0) {
+        continue;
+      }
+      this.io.to(socketId).emit(event, payload);
+    }
+  }
+
+  emitToAuthorized(targetProfile, event, payload, options) {
+    this.emitPresenceEvent(targetProfile, event, payload, options);
   }
 
   getConnectedUsers() {

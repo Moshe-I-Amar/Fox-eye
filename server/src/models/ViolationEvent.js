@@ -78,4 +78,12 @@ const violationEventSchema = new mongoose.Schema(
   }
 );
 
+violationEventSchema.index({ occurredAt: -1 });
+violationEventSchema.index({ companyId: 1, occurredAt: -1 });
+violationEventSchema.index({ unitId: 1, occurredAt: -1 });
+violationEventSchema.index({ teamId: 1, occurredAt: -1 });
+violationEventSchema.index({ squadId: 1, occurredAt: -1 });
+violationEventSchema.index({ userId: 1, occurredAt: -1 });
+violationEventSchema.index({ type: 1, occurredAt: -1 });
+
 module.exports = mongoose.model('ViolationEvent', violationEventSchema);

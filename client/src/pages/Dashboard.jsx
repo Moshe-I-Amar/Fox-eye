@@ -7,6 +7,8 @@ import { userService } from '../services/usersApi';
 import { aoService } from '../services/aoApi';
 import socketService from '../services/socketService';
 import { authService } from '../services/authApi';
+import { hierarchyService } from '../services/hierarchyApi';
+import { violationService } from '../services/violationsApi';
 import { isValidCoords, safeGetCoords } from '../utils/location';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
@@ -80,21 +82,6 @@ const DEFAULT_AO_ICON = '';
 const AO_ICON_MAX_LENGTH = 6;
 const AO_NAME_MIN = 2;
 const AO_NAME_MAX = 100;
-const AO_ICON_PRESETS = [
-  '🛰️', '📡', '🛡️', '⚡', '🧭', '📍', '🚨', '🔭',
-  '🧯', '🩺', '🚑', '🚒', '⛑️', '🛠️', '⚙️', '📦',
-  '🧱', '🚧', '🛰', '🗺️', '🔒', '✅', '⚠️', '⭐'
-];
-const AO_PRESET_OPTIONS = [
-  { label: 'Ops Command', icon: '🛰️', color: '#C7A76C' },
-  { label: 'Medical', icon: '🩺', color: '#6DD3CE' },
-  { label: 'Fire', icon: '🚒', color: '#FF6B6B' },
-  { label: 'Search', icon: '🔭', color: '#7BD389' },
-  { label: 'Security', icon: '🛡️', color: '#4C6EF5' },
-  { label: 'Hazard', icon: '⚠️', color: '#F4C542' },
-  { label: 'Engineering', icon: '🛠️', color: '#9C7AFA' },
-  { label: 'Logistics', icon: '📦', color: '#FFA94D' }
-];
 
 const escapeXml = (value = '') =>
   value
@@ -254,7 +241,8 @@ const MapComponent = ({
   onAOEdit,
   onAOSelect,
   featureGroupRef,
-  canManageAOs = false
+  canManageAOs = false,
+  getCompanyIdentity
 }) => {
   const bindAoLayer = (aoId) => (layer) => {
     if (layer) {
@@ -282,8 +270,9 @@ const MapComponent = ({
   const getMarkerIcon = useCallback(
     ({ point, className = '', variant = 'pin' }) => {
       const ao = getAoForPoint(point);
-      const color = ao?.style?.color || DEFAULT_AO_COLOR;
-      const icon = ao?.style?.icon || DEFAULT_AO_ICON;
+      const companyIdentity = ao && getCompanyIdentity ? getCompanyIdentity(ao) : null;
+      const color = companyIdentity?.color || DEFAULT_AO_COLOR;
+      const icon = companyIdentity?.icon || DEFAULT_AO_ICON;
       const cacheKey = `${variant}:${className}:${color}:${icon}`;
       return getCachedIcon(cacheKey, () =>
         createAoMarkerIcon({
@@ -300,15 +289,18 @@ const MapComponent = ({
   const aoStrokeStyles = useMemo(
     () =>
       new Map(
-        aos.map((ao) => [
-          ao._id,
-          {
-            color: ao?.style?.color || DEFAULT_AO_COLOR,
-            fillColor: ao?.style?.color || DEFAULT_AO_COLOR
-          }
-        ])
+        aos.map((ao) => {
+          const identity = getCompanyIdentity ? getCompanyIdentity(ao) : null;
+          return [
+            ao._id,
+            {
+              color: identity?.color || DEFAULT_AO_COLOR,
+              fillColor: identity?.color || DEFAULT_AO_COLOR
+            }
+          ];
+        })
       ),
-    [aos]
+    [aos, getCompanyIdentity]
   );
 
   return (
@@ -369,7 +361,7 @@ const MapComponent = ({
               fillColor: aoStrokeStyles.get(ao._id)?.fillColor || DEFAULT_AO_COLOR,
               fillOpacity: ao.active ? 0.2 : 0.06,
               weight: ao.active ? 2 : 1,
-              dashArray: ao.active ? null : '5,6'
+              dashArray: (getCompanyIdentity && getCompanyIdentity(ao)?.pattern) || (ao.active ? null : '5,6')
             }}
             ref={bindAoLayer(ao._id)}
             eventHandlers={{
@@ -481,15 +473,34 @@ const Dashboard = () => {
   const [aoError, setAoError] = useState('');
   const [aoDraft, setAoDraft] = useState(null);
   const [aoModalMode, setAoModalMode] = useState('create');
-  const [aoForm, setAoForm] = useState({ name: '', color: DEFAULT_AO_COLOR, icon: '' });
+  const [aoForm, setAoForm] = useState({ name: '', color: DEFAULT_AO_COLOR, icon: '', pattern: '', companyId: '' });
   const [aoIconError, setAoIconError] = useState('');
   const [aoNameError, setAoNameError] = useState('');
   const [selectedAO, setSelectedAO] = useState(null);
   const [aoSaving, setAoSaving] = useState(false);
+  const [violations, setViolations] = useState([]);
+  const [violationLoading, setViolationLoading] = useState(false);
+  const [violationError, setViolationError] = useState('');
+  const [violationFilters, setViolationFilters] = useState({
+    severity: 'all',
+    companyId: '',
+    start: '',
+    end: ''
+  });
+  const [hierarchyMap, setHierarchyMap] = useState({
+    units: {},
+    companies: {},
+    teams: {},
+    squads: {}
+  });
+  const [companyOptions, setCompanyOptions] = useState([]);
   const featureGroupRef = useRef(null);
   const currentUser = authService.getCurrentUser();
   const currentUserId = currentUser?.id || currentUser?._id;
   const canManageAOs = currentUser?.role === 'admin' || currentUser?.operationalRole === 'COMPANY_COMMANDER';
+  const canViewViolations =
+    currentUser?.role === 'admin' ||
+    ['HQ', 'UNIT_COMMANDER'].includes(currentUser?.operationalRole);
   const navigate = useNavigate();
 
   // Initialize socket connection
@@ -833,12 +844,8 @@ const Dashboard = () => {
     try {
       setAoLoading(true);
       setAoError('');
-      const params = {};
-      if (currentUser?.role === 'admin' && currentUser?.companyId) {
-        params.companyId = currentUser.companyId;
-      }
-      const response = await aoService.getAOs(params);
-      setAos(response?.data?.aos || []);
+      const response = await aoService.getAOs();
+      setAos(response?.aos || []);
     } catch (error) {
       console.error('Error fetching AOs:', error);
       setAoError('Failed to load area overlays. Please try again.');
@@ -850,6 +857,119 @@ const Dashboard = () => {
   useEffect(() => {
     fetchAOs();
   }, []);
+
+  useEffect(() => {
+    let isActive = true;
+    const loadHierarchy = async () => {
+      try {
+        const data = await hierarchyService.getTree();
+        if (!isActive) return;
+        const units = {};
+        const companies = {};
+        const teams = {};
+        const squads = {};
+
+        (data.units || []).forEach((unit) => { units[unit._id] = unit.name; });
+        (data.companies || []).forEach((company) => {
+          companies[company._id] = {
+            name: company.name,
+            color: company.color,
+            pattern: company.pattern,
+            icon: company.icon
+          };
+        });
+        (data.teams || []).forEach((team) => { teams[team._id] = team.name; });
+        (data.squads || []).forEach((squad) => { squads[squad._id] = squad.name; });
+
+        setHierarchyMap({ units, companies, teams, squads });
+        setCompanyOptions(data.companies || []);
+      } catch (error) {
+        console.warn('Failed to load hierarchy metadata:', error);
+      }
+    };
+
+    loadHierarchy();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  const fetchViolations = useCallback(async () => {
+    if (!canViewViolations) {
+      return;
+    }
+    try {
+      setViolationLoading(true);
+      setViolationError('');
+      const params = {
+        limit: 20
+      };
+      if (violationFilters.severity && violationFilters.severity !== 'all') {
+        params.severity = violationFilters.severity;
+      }
+      if (violationFilters.companyId) {
+        params.companyId = violationFilters.companyId;
+      }
+      if (violationFilters.start) {
+        params.start = violationFilters.start;
+      }
+      if (violationFilters.end) {
+        params.end = violationFilters.end;
+      }
+      const response = await violationService.getViolations(params);
+      setViolations(response.violations || []);
+    } catch (error) {
+      console.error('Error loading violation history:', error);
+      setViolationError('Failed to load violation history.');
+    } finally {
+      setViolationLoading(false);
+    }
+  }, [canViewViolations, violationFilters]);
+
+  useEffect(() => {
+    fetchViolations();
+  }, [fetchViolations]);
+
+  const visibleCompanies = useMemo(() => {
+    if (currentUser?.role === 'admin') {
+      return companyOptions;
+    }
+    if (currentUser?.companyId) {
+      return companyOptions.filter((company) => company._id === currentUser.companyId);
+    }
+    return companyOptions;
+  }, [companyOptions, currentUser?.companyId, currentUser?.role]);
+
+  useEffect(() => {
+    if (!aoForm.companyId && visibleCompanies.length) {
+      setAoForm((prev) => ({ ...prev, companyId: visibleCompanies[0]._id }));
+    }
+  }, [aoForm.companyId, visibleCompanies]);
+
+  useEffect(() => {
+    if (!aoForm.companyId) {
+      return;
+    }
+    const company = companyOptions.find((item) => item._id === aoForm.companyId);
+    if (!company) {
+      return;
+    }
+    setAoForm((prev) => {
+      const nextColor = company.color || DEFAULT_AO_COLOR;
+      const nextIcon = company.icon || '';
+      const nextPattern = company.pattern || '';
+      if (prev.color === nextColor && prev.icon === nextIcon && prev.pattern === nextPattern) {
+        return prev;
+      }
+      return {
+        ...prev,
+        color: nextColor,
+        icon: nextIcon,
+        pattern: nextPattern
+      };
+    });
+  }, [aoForm.companyId, companyOptions]);
 
   const clearDraftLayer = () => {
     if (featureGroupRef.current && aoDraft?.layer) {
@@ -871,7 +991,13 @@ const Dashboard = () => {
       polygon,
       layer: event.layer
     });
-    setAoForm({ name: '', color: DEFAULT_AO_COLOR, icon: '' });
+    setAoForm({
+      name: '',
+      color: DEFAULT_AO_COLOR,
+      icon: '',
+      pattern: '',
+      companyId: currentUser?.companyId || visibleCompanies[0]?._id || ''
+    });
     setAoIconError('');
     setAoNameError('');
     setAoModalMode('create');
@@ -923,7 +1049,9 @@ const Dashboard = () => {
     setAoForm({
       name: ao.name || '',
       color: ao.style?.color || DEFAULT_AO_COLOR,
-      icon: ao.style?.icon || ''
+      icon: ao.style?.icon || '',
+      pattern: ao.style?.pattern || '',
+      companyId: ao.companyId || currentUser?.companyId || ''
     });
     setAoIconError('');
     setAoNameError('');
@@ -935,7 +1063,13 @@ const Dashboard = () => {
     clearDraftLayer();
     setAoDraft(null);
     setSelectedAO(null);
-    setAoForm({ name: '', color: DEFAULT_AO_COLOR, icon: '' });
+    setAoForm({
+      name: '',
+      color: DEFAULT_AO_COLOR,
+      icon: '',
+      pattern: '',
+      companyId: currentUser?.companyId || visibleCompanies[0]?._id || ''
+    });
     setAoIconError('');
     setAoNameError('');
   };
@@ -951,6 +1085,10 @@ const Dashboard = () => {
       setAoError(`Icon must be an image URL/path or ${AO_ICON_MAX_LENGTH} characters or fewer.`);
       return;
     }
+    if (!aoForm.companyId) {
+      setAoError('Owning company is required to save this AO.');
+      return;
+    }
 
     try {
       setAoSaving(true);
@@ -961,20 +1099,15 @@ const Dashboard = () => {
           return;
         }
 
-        if (!currentUser?.companyId) {
-          setAoError('Company assignment is required to save this AO.');
-          return;
-        }
-
         const payload = {
           name: trimmedName,
           polygon: aoDraft.polygon,
-          style: { color: aoForm.color, icon: trimmedIcon || null },
-          companyId: currentUser.companyId
+          style: { color: aoForm.color, icon: trimmedIcon || null, pattern: aoForm.pattern || null },
+          companyId: aoForm.companyId
         };
 
         const response = await aoService.createAO(payload);
-        const createdAO = response?.data?.ao;
+        const createdAO = response?.ao;
         if (createdAO) {
           setAos((prev) => [createdAO, ...prev]);
         }
@@ -983,9 +1116,10 @@ const Dashboard = () => {
       } else if (selectedAO) {
         const response = await aoService.updateAO(selectedAO._id, {
           name: trimmedName,
-          style: { color: aoForm.color, icon: trimmedIcon || null }
+          style: { color: aoForm.color, icon: trimmedIcon || null, pattern: aoForm.pattern || null },
+          companyId: aoForm.companyId
         });
-        const updatedAO = response?.data?.ao;
+        const updatedAO = response?.ao;
         if (updatedAO) {
           setAos((prev) => prev.map((ao) => (ao._id === updatedAO._id ? updatedAO : ao)));
         } else {
@@ -1141,14 +1275,54 @@ const Dashboard = () => {
     });
   };
 
+  const formatViolationType = (type) => {
+    switch (type) {
+      case 'APPROACHING_BOUNDARY':
+        return 'Approaching Boundary';
+      case 'SUSTAINED_BREACH':
+        return 'Sustained Breach';
+      case 'BREACH':
+      default:
+        return 'Breach';
+    }
+  };
+
   const handleViewportChange = useCallback((viewport) => {
     setViewportBounds(viewport);
   }, []);
 
+  const focusViolation = (violation) => {
+    const coords = violation?.coordinates;
+    if (!Array.isArray(coords) || coords.length !== 2) {
+      return;
+    }
+    const [lng, lat] = coords;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return;
+    }
+    setMapCenter([lat, lng]);
+  };
+
+  const getCompanyIdentity = (ao) => {
+    const company = hierarchyMap.companies[ao?.companyId];
+    if (company) {
+      return {
+        color: company.color || DEFAULT_AO_COLOR,
+        icon: company.icon || DEFAULT_AO_ICON,
+        pattern: company.pattern || null
+      };
+    }
+    return {
+      color: ao?.style?.color || DEFAULT_AO_COLOR,
+      icon: ao?.style?.icon || DEFAULT_AO_ICON,
+      pattern: ao?.style?.pattern || null
+    };
+  };
+
   const renderAoLegendIcon = (ao) => {
-    const color = ao?.style?.color || DEFAULT_AO_COLOR;
-    const icon = `${ao?.style?.icon || ''}`.trim();
-    const hasImage = icon && isImageUrl(icon);
+    const { color, icon } = getCompanyIdentity(ao);
+    const trimmedIcon = `${icon || ''}`.trim();
+    const hasImage = trimmedIcon && isImageUrl(trimmedIcon);
 
     return (
       <span
@@ -1156,9 +1330,9 @@ const Dashboard = () => {
         style={{ backgroundColor: color }}
       >
         {hasImage ? (
-          <img src={icon} alt="" className="h-3.5 w-3.5" />
+          <img src={trimmedIcon} alt="" className="h-3.5 w-3.5" />
         ) : (
-          icon
+          trimmedIcon
         )}
       </span>
     );
@@ -1284,6 +1458,93 @@ const Dashboard = () => {
             </div>
           </Card>
 
+          {canViewViolations && (
+            <Card className="mb-6" padding="small">
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-gold">Violation History</h3>
+                  <span className="text-xs text-gold/60">{violations.length} recent</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    className="dark-input w-full text-xs"
+                    value={violationFilters.severity}
+                    onChange={(event) =>
+                      setViolationFilters((prev) => ({ ...prev, severity: event.target.value }))
+                    }
+                  >
+                    <option value="all">All severities</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                  <select
+                    className="dark-input w-full text-xs"
+                    value={violationFilters.companyId}
+                    onChange={(event) =>
+                      setViolationFilters((prev) => ({ ...prev, companyId: event.target.value }))
+                    }
+                  >
+                    <option value="">All companies</option>
+                    {companyOptions.map((company) => (
+                      <option key={company._id} value={company._id}>
+                        {company.name}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="date"
+                    className="dark-input w-full text-xs"
+                    value={violationFilters.start}
+                    onChange={(event) =>
+                      setViolationFilters((prev) => ({ ...prev, start: event.target.value }))
+                    }
+                  />
+                  <input
+                    type="date"
+                    className="dark-input w-full text-xs"
+                    value={violationFilters.end}
+                    onChange={(event) =>
+                      setViolationFilters((prev) => ({ ...prev, end: event.target.value }))
+                    }
+                  />
+                </div>
+                {violationError && (
+                  <p className="text-xs text-red-400">{violationError}</p>
+                )}
+                <div className="space-y-2 max-h-44 overflow-y-auto scrollbar-thin">
+                  {violationLoading ? (
+                    <div className="text-xs text-gold/50">Loading violations...</div>
+                  ) : violations.length === 0 ? (
+                    <div className="text-xs text-gold/50">No violations found.</div>
+                  ) : (
+                    violations.map((violation) => (
+                      <button
+                        key={violation._id}
+                        type="button"
+                        onClick={() => focusViolation(violation)}
+                        className="w-full text-left rounded-lg border border-gold/10 px-3 py-2 hover:border-gold/40 transition-colors"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gold/80 font-semibold">
+                            {formatViolationType(violation.type)}
+                          </span>
+                          <span className="text-[11px] text-gold/50">
+                            {formatTimestamp(violation.occurredAt)}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-gold/50 mt-1">
+                          {violation.aoName || 'Unknown AO'} •{' '}
+                          {hierarchyMap.companies[violation.companyId]?.name || 'Company'}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            </Card>
+          )}
+
           {/* User List */}
           <div className="flex-1 overflow-y-auto scrollbar-thin space-y-3">
             {loading ? (
@@ -1348,6 +1609,7 @@ const Dashboard = () => {
               onAOSelect={handleAOSelect}
               featureGroupRef={featureGroupRef}
               canManageAOs={canManageAOs}
+              getCompanyIdentity={getCompanyIdentity}
             />
           </Card>
         </div>
@@ -1361,6 +1623,25 @@ const Dashboard = () => {
         closeOnBackdrop={false}
       >
         <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm text-gold">Owning Company</label>
+            <select
+              className="dark-input w-full"
+              value={aoForm.companyId}
+              onChange={(event) => {
+                const value = event.target.value;
+                setAoForm((prev) => ({ ...prev, companyId: value }));
+              }}
+              disabled={visibleCompanies.length === 1 && currentUser?.role !== 'admin'}
+            >
+              <option value="" disabled>Select company</option>
+              {visibleCompanies.map((company) => (
+                <option key={company._id} value={company._id}>
+                  {company.name}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="space-y-2">
             <label className="text-sm text-gold">AO Name</label>
             <input
@@ -1385,39 +1666,15 @@ const Dashboard = () => {
             {aoNameError && <p className="text-xs text-red-400">{aoNameError}</p>}
           </div>
           <div className="space-y-2">
-            <label className="text-sm text-gold">Presets</label>
-            <select
-              className="dark-input w-full"
-              value=""
-              onChange={(event) => {
-                const selected = AO_PRESET_OPTIONS.find((preset) => preset.label === event.target.value);
-                if (!selected) return;
-                setAoForm((prev) => ({
-                  ...prev,
-                  name: prev.name || selected.label,
-                  color: selected.color,
-                  icon: selected.icon
-                }));
-                setAoIconError('');
-                setAoNameError('');
-              }}
-            >
-              <option value="" disabled>Select a preset</option>
-              {AO_PRESET_OPTIONS.map((preset) => (
-                <option key={preset.label} value={preset.label}>
-                  {preset.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-2">
             <label className="text-sm text-gold">Overlay Color</label>
             <input
               type="color"
               value={aoForm.color}
               onChange={(event) => setAoForm((prev) => ({ ...prev, color: event.target.value }))}
               className="h-10 w-20 rounded border border-gold/30 bg-transparent"
+              disabled
             />
+            <p className="text-xs text-gold/60">Color derives from the owning company identity.</p>
           </div>
           <div className="space-y-2">
             <label className="text-sm text-gold">Overlay Icon</label>
@@ -1435,7 +1692,7 @@ const Dashboard = () => {
               <input
                 className="dark-input w-full"
                 type="text"
-                placeholder="e.g. 🛰️ or /icons/ao.png"
+                placeholder="Company icon"
                 value={aoForm.icon}
                 onChange={(event) => {
                   const value = event.target.value;
@@ -1446,31 +1703,13 @@ const Dashboard = () => {
                     setAoIconError('');
                   }
                 }}
+                disabled
               />
             </div>
             <p className="text-xs text-gold/60">
-              Use a short label/emoji or an image URL/path for the AO icon.
+              Icon derives from the owning company identity.
             </p>
             {aoIconError && <p className="text-xs text-red-400">{aoIconError}</p>}
-            <div className="grid grid-cols-8 gap-2 pt-2">
-              {AO_ICON_PRESETS.map((preset) => (
-                <button
-                  key={preset}
-                  type="button"
-                  className={`h-8 w-8 rounded-lg border text-sm ${
-                    aoForm.icon === preset
-                      ? 'border-gold bg-gold/15'
-                      : 'border-gold/20 hover:border-gold/60'
-                  }`}
-                  onClick={() => {
-                    setAoForm((prev) => ({ ...prev, icon: preset }));
-                    setAoIconError('');
-                  }}
-                >
-                  {preset}
-                </button>
-              ))}
-            </div>
           </div>
           <div className="flex items-center justify-end space-x-2">
             <Button variant="ghost" onClick={handleAOCancel}>
@@ -1536,6 +1775,28 @@ const Dashboard = () => {
               <p className="text-gold text-sm">
                 {formatTimestamp(selectedUser.lastUpdateAt || selectedUser.lastSeen || selectedUser.updatedAt)}
               </p>
+            </div>
+
+            <div className="glass-card rounded-lg p-3">
+              <p className="text-gold/60 text-sm mb-2">Hierarchy</p>
+              <div className="space-y-2 text-sm text-gold">
+                <div className="flex justify-between">
+                  <span className="text-gold/60">Unit:</span>
+                  <span>{hierarchyMap.units[selectedUser.unitId] || selectedUser.unitId || 'Unassigned'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gold/60">Company:</span>
+                  <span>{hierarchyMap.companies[selectedUser.companyId]?.name || selectedUser.companyId || 'Unassigned'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gold/60">Team:</span>
+                  <span>{hierarchyMap.teams[selectedUser.teamId] || selectedUser.teamId || 'Unassigned'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gold/60">Squad:</span>
+                  <span>{hierarchyMap.squads[selectedUser.squadId] || selectedUser.squadId || 'Unassigned'}</span>
+                </div>
+              </div>
             </div>
           </div>
         )}

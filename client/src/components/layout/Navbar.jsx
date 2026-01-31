@@ -1,12 +1,14 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../../services/authApi';
+import api from '../../services/api';
 import Button from '../ui/Button';
 
 const Navbar = ({ realtimeStatus = 'offline' }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const user = authService.getCurrentUser();
+  const [healthStatus, setHealthStatus] = useState('unknown');
 
   const handleLogout = () => {
     authService.logout();
@@ -14,6 +16,37 @@ const Navbar = ({ realtimeStatus = 'offline' }) => {
   };
 
   const isAuthPage = ['/login', '/register'].includes(location.pathname);
+
+  useEffect(() => {
+    if (isAuthPage) {
+      return undefined;
+    }
+    let isActive = true;
+    const fetchHealth = async () => {
+      try {
+        const response = await api.get('/api/health');
+        const dbStatus = response?.data?.data?.db?.status;
+        const socketStatus = response?.data?.data?.socket?.initialized;
+        if (!isActive) return;
+        if (dbStatus === 'connected' && socketStatus) {
+          setHealthStatus('ok');
+        } else {
+          setHealthStatus('degraded');
+        }
+      } catch (error) {
+        if (!isActive) return;
+        setHealthStatus('down');
+      }
+    };
+
+    fetchHealth();
+    const timer = setInterval(fetchHealth, 30000);
+
+    return () => {
+      isActive = false;
+      clearInterval(timer);
+    };
+  }, [isAuthPage]);
 
   if (isAuthPage) return null;
 
@@ -34,6 +67,28 @@ const Navbar = ({ realtimeStatus = 'offline' }) => {
         </Link>
 
         <div className="flex items-center space-x-4">
+          {healthStatus !== 'unknown' && (
+            <div
+              className={`flex items-center space-x-2 rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] ${
+                healthStatus === 'ok'
+                  ? 'border-emerald-400/40 bg-emerald-400/10 text-emerald-300'
+                  : healthStatus === 'degraded'
+                    ? 'border-gold/40 bg-gold/10 text-gold/70'
+                    : 'border-red-400/40 bg-red-400/10 text-red-300'
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  healthStatus === 'ok'
+                    ? 'bg-emerald-400'
+                    : healthStatus === 'degraded'
+                      ? 'bg-gold/70 animate-pulse'
+                      : 'bg-red-400'
+                }`}
+              />
+              <span>{healthStatus === 'ok' ? 'Healthy' : healthStatus === 'degraded' ? 'Degraded' : 'Down'}</span>
+            </div>
+          )}
           {(showLive || showReconnecting) && (
             <div
               className={`flex items-center space-x-2 rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] ${
