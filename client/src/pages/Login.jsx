@@ -43,7 +43,7 @@ const Login = () => {
 
     try {
       const response = await authService.login(formData);
-      authService.setAuthData(response.data.token, response.data.user);
+      authService.setAuthData(response.token, response.user);
       navigate(from, { replace: true });
     } catch (error) {
       const message = error.response?.data?.message || 'Login failed';

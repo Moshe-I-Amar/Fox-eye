@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authApi';
 import { userService } from '../services/usersApi';
 import socketService from '../services/socketService';
+import { isValidCoords, safeGetCoords } from '../utils/location';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Input from '../components/ui/Input';
@@ -83,7 +84,7 @@ const Admin = () => {
     };
 
     socketService.on('connect', handleConnect);
-    socketService.on('disconnected', handleDisconnect);
+    socketService.on('disconnect', handleDisconnect);
     socketService.on('reconnecting', handleReconnect);
     socketService.on('connect_error', handleConnectError);
     socketService.on('reconnect_failed', handleReconnectFailed);
@@ -91,9 +92,9 @@ const Admin = () => {
 
     const initSocket = async () => {
       const token = localStorage.getItem('token');
-      const user = JSON.parse(localStorage.getItem('user') || '{}');
+      const user = authService.getCurrentUser();
       
-      if (token && user.role === 'admin') {
+      if (token && user?.role === 'admin') {
         try {
           await socketService.connect(token);
           setRealtimeEnabled(true);
@@ -119,7 +120,7 @@ const Admin = () => {
 
     return () => {
       socketService.off('connect', handleConnect);
-      socketService.off('disconnected', handleDisconnect);
+      socketService.off('disconnect', handleDisconnect);
       socketService.off('reconnecting', handleReconnect);
       socketService.off('connect_error', handleConnectError);
       socketService.off('reconnect_failed', handleReconnectFailed);
@@ -251,13 +252,13 @@ const Admin = () => {
     try {
       setLoading(true);
       const response = await userService.getAllUsers(pagination.page, pagination.limit);
-      setUsers(response.data.users.map(user => ({
+      setUsers(response.users.map(user => ({
         ...user,
         lastUpdateAt: user.lastUpdateAt || user.lastSeen || user.updatedAt
       })));
       setPagination(prev => ({
         ...prev,
-        ...response.data.pagination
+        ...response.pagination
       }));
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -439,13 +440,19 @@ const Admin = () => {
                               {onlineUsers.has(user._id) && (
                                 <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                               )}
-                              {user.location.coordinates[0] !== 0 || user.location.coordinates[1] !== 0 ? (
-                                <span className="text-xs text-gold/60">
-                                  {user.location.coordinates[1].toFixed(2)}, {user.location.coordinates[0].toFixed(2)}
-                                </span>
-                              ) : (
-                                <span className="text-gold/40">Not set</span>
-                              )}
+                              {(() => {
+                                const coords = safeGetCoords(user);
+                                const hasCoords =
+                                  isValidCoords(coords) && !(coords[0] === 0 && coords[1] === 0);
+                                if (!hasCoords) {
+                                  return <span className="text-gold/40">No location yet</span>;
+                                }
+                                return (
+                                  <span className="text-xs text-gold/60">
+                                    {coords[1].toFixed(2)}, {coords[0].toFixed(2)}
+                                  </span>
+                                );
+                              })()}
                             </div>
                           </td>
                           <td className="py-3 px-4">
@@ -549,20 +556,26 @@ const Admin = () => {
 
             <Card glass>
               <p className="text-gold/60 text-sm mb-3">Location</p>
-              {selectedUser.location.coordinates[0] !== 0 || selectedUser.location.coordinates[1] !== 0 ? (
-                <div className="space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-gold/60">Latitude:</span>
-                    <span className="text-gold font-mono">{selectedUser.location.coordinates[1].toFixed(6)}</span>
+              {(() => {
+                const coords = safeGetCoords(selectedUser);
+                const hasCoords =
+                  isValidCoords(coords) && !(coords[0] === 0 && coords[1] === 0);
+                if (!hasCoords) {
+                  return <p className="text-gold/40 italic">No location yet</p>;
+                }
+                return (
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-gold/60">Latitude:</span>
+                      <span className="text-gold font-mono">{coords[1].toFixed(6)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gold/60">Longitude:</span>
+                      <span className="text-gold font-mono">{coords[0].toFixed(6)}</span>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gold/60">Longitude:</span>
-                    <span className="text-gold font-mono">{selectedUser.location.coordinates[0].toFixed(6)}</span>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-gold/40 italic">Location not set</p>
-              )}
+                );
+              })()}
             </Card>
 
             <Card glass>

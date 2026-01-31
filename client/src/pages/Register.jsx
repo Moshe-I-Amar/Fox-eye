@@ -67,7 +67,7 @@ const Register = () => {
     try {
       const { confirmPassword, ...registerData } = formData;
       const response = await authService.register(registerData);
-      authService.setAuthData(response.data.token, response.data.user);
+      authService.setAuthData(response.token, response.user);
       navigate('/dashboard');
     } catch (error) {
       const message = error.response?.data?.message || 'Registration failed';

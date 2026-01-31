@@ -5,8 +5,9 @@ import { EditControl } from 'react-leaflet-draw';
 import { Icon } from 'leaflet';
 import { userService } from '../services/usersApi';
 import { aoService } from '../services/aoApi';
-import socketClient from '../realtime/socketClient';
+import socketService from '../services/socketService';
 import { authService } from '../services/authApi';
+import { isValidCoords, safeGetCoords } from '../utils/location';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Modal from '../components/ui/Modal';
@@ -16,6 +17,9 @@ const MapController = ({ center }) => {
   const map = useMap();
   
   useEffect(() => {
+    if (!isValidCoords(center)) {
+      return;
+    }
     map.setView(center, map.getZoom());
   }, [center, map]);
   
@@ -396,7 +400,7 @@ const MapComponent = ({
       </FeatureGroup>
       
       {/* User's current location marker */}
-      {userLocation && (
+      {isValidCoords(userLocation) && (
         <Marker
           position={userLocation}
           icon={getMarkerIcon({
@@ -415,35 +419,38 @@ const MapComponent = ({
         </Marker>
       )}
       
-      {users.map((user) => (
-        <Marker
-          key={user._id}
-          position={[user.location.coordinates[1], user.location.coordinates[0]]}
-          icon={
-            getMarkerIcon({
-              point: user.location.coordinates,
-              className: liveUpdateIds.has(user._id) ? 'marker-live-update' : '',
-              variant: 'pin'
-            })
-          }
-          eventHandlers={{
-            click: () => onUserClick(user)
-          }}
-        >
-          <Popup>
-            <div className="text-jet">
-              <p className="font-semibold">{user.name}</p>
-              <p className="text-sm text-gray-600">{user.email}</p>
-              <p className={`text-xs ${user.isOnline ? 'text-green-600' : 'text-gray-500'}`}>
-                {user.isOnline ? 'Online' : 'Offline'}
-              </p>
-              {user.distance && (
-                <p className="text-xs text-gray-500">{user.distance} km away</p>
-              )}
-            </div>
-          </Popup>
-        </Marker>
-      ))}
+      {users
+        .map((user) => ({ user, coords: safeGetCoords(user) }))
+        .filter(({ coords }) => isValidCoords(coords))
+        .map(({ user, coords }) => (
+          <Marker
+            key={user._id}
+            position={[coords[1], coords[0]]}
+            icon={
+              getMarkerIcon({
+                point: coords,
+                className: liveUpdateIds.has(user._id) ? 'marker-live-update' : '',
+                variant: 'pin'
+              })
+            }
+            eventHandlers={{
+              click: () => onUserClick(user)
+            }}
+          >
+            <Popup>
+              <div className="text-jet">
+                <p className="font-semibold">{user.name}</p>
+                <p className="text-sm text-gray-600">{user.email}</p>
+                <p className={`text-xs ${user.isOnline ? 'text-green-600' : 'text-gray-500'}`}>
+                  {user.isOnline ? 'Online' : 'Offline'}
+                </p>
+                {user.distance && (
+                  <p className="text-xs text-gray-500">{user.distance} km away</p>
+                )}
+              </div>
+            </Popup>
+          </Marker>
+        ))}
     </MapContainer>
   );
 };
@@ -464,6 +471,7 @@ const Dashboard = () => {
   const [realtimeNoticeTone, setRealtimeNoticeTone] = useState('warning');
   const [liveUpdateIds, setLiveUpdateIds] = useState(new Set());
   const liveUpdateTimers = useRef(new Map());
+  const nearbyFetchTimerRef = useRef(null);
   const realtimeEnabledRef = useRef(realtimeEnabled);
   const hasCenteredMapRef = useRef(false);
   const lastLocationSentRef = useRef({ time: 0, coords: null });
@@ -537,23 +545,23 @@ const Dashboard = () => {
       });
     };
 
-    socketClient.on('connect', handleConnect);
-    socketClient.on('disconnect', handleDisconnect);
-    socketClient.on('reconnecting', handleReconnect);
-    socketClient.on('connect_error', handleConnectError);
-    socketClient.on('reconnect_failed', handleReconnectFailed);
-    socketClient.on('auth_error', handleAuthError);
+    socketService.on('connect', handleConnect);
+    socketService.on('disconnect', handleDisconnect);
+    socketService.on('reconnecting', handleReconnect);
+    socketService.on('connect_error', handleConnectError);
+    socketService.on('reconnect_failed', handleReconnectFailed);
+    socketService.on('auth_error', handleAuthError);
 
     const initSocket = async () => {
       const token = localStorage.getItem('token');
       if (token) {
         try {
-          await socketClient.connect(token);
+          await socketService.connect(token);
           setRealtimeEnabled(true);
           setRealtimeStatus('connected');
           
           // Subscribe to presence updates
-          socketClient.subscribeToPresence();
+          socketService.subscribeToPresence();
           
           console.log('Socket connected and authenticated');
         } catch (error) {
@@ -571,13 +579,13 @@ const Dashboard = () => {
     initSocket();
 
     return () => {
-      socketClient.off('connect', handleConnect);
-      socketClient.off('disconnect', handleDisconnect);
-      socketClient.off('reconnecting', handleReconnect);
-      socketClient.off('connect_error', handleConnectError);
-      socketClient.off('reconnect_failed', handleReconnectFailed);
-      socketClient.off('auth_error', handleAuthError);
-      socketClient.disconnect();
+      socketService.off('connect', handleConnect);
+      socketService.off('disconnect', handleDisconnect);
+      socketService.off('reconnecting', handleReconnect);
+      socketService.off('connect_error', handleConnectError);
+      socketService.off('reconnect_failed', handleReconnectFailed);
+      socketService.off('auth_error', handleAuthError);
+      socketService.disconnect();
     };
   }, [navigate]);
 
@@ -589,6 +597,9 @@ const Dashboard = () => {
     return () => {
       liveUpdateTimers.current.forEach((timer) => clearTimeout(timer));
       liveUpdateTimers.current.clear();
+      if (nearbyFetchTimerRef.current) {
+        clearTimeout(nearbyFetchTimerRef.current);
+      }
     };
   }, []);
 
@@ -639,11 +650,12 @@ const Dashboard = () => {
     const handleLocationUpdate = (data) => {
       console.log('Received location update:', data);
 
-      if (!data?.coordinates || data.coordinates.length !== 2) {
+      if (!isValidCoords(data?.coordinates)) {
         return;
       }
 
       const [longitude, latitude] = data.coordinates;
+      const distanceCenter = isValidCoords(userLocation) ? userLocation : mapCenter;
 
       if (currentUserId && data.userId === currentUserId) {
         setUserLocation([latitude, longitude]);
@@ -664,7 +676,7 @@ const Dashboard = () => {
             ...updatedUsers[userIndex],
             location: nextLocation,
             distance: calculateDistance(
-              mapCenter,
+              distanceCenter,
               [latitude, longitude]
             ),
             lastUpdateAt: updateTimestamp
@@ -679,7 +691,7 @@ const Dashboard = () => {
           ? {
               ...prev,
               location: nextLocation,
-              distance: calculateDistance(mapCenter, [latitude, longitude]),
+              distance: calculateDistance(distanceCenter, [latitude, longitude]),
               lastUpdateAt: updateTimestamp
             }
           : prev
@@ -704,32 +716,101 @@ const Dashboard = () => {
       console.error('Socket error:', error);
     };
 
-    socketClient.on('location:update', handleLocationUpdate);
-    socketClient.on('presence:update', handlePresenceUpdate);
-    socketClient.on('error', handleSocketError);
+    socketService.on('location:update', handleLocationUpdate);
+    socketService.on('presence:update', handlePresenceUpdate);
+    socketService.on('error', handleSocketError);
 
     return () => {
-      socketClient.off('location:update', handleLocationUpdate);
-      socketClient.off('presence:update', handlePresenceUpdate);
-      socketClient.off('error', handleSocketError);
+      socketService.off('location:update', handleLocationUpdate);
+      socketService.off('presence:update', handlePresenceUpdate);
+      socketService.off('error', handleSocketError);
     };
-  }, [realtimeEnabled, mapCenter, radius, currentUserId]);
+  }, [realtimeEnabled, mapCenter, radius, currentUserId, userLocation]);
 
   useEffect(() => {
     if (!realtimeEnabled || !viewportBounds) {
       return;
     }
-    if (!socketClient.isSocketConnected()) {
+    if (!socketService.isSocketConnected()) {
       return;
     }
-    socketClient.subscribeToViewport(viewportBounds);
+    socketService.subscribeToViewport(viewportBounds);
   }, [realtimeEnabled, viewportBounds]);
 
-  // Initial data fetch
-  useEffect(() => {
-    fetchNearbyUsers();
-  }, [mapCenter, radius]);
+  const getViewportCenter = useCallback(() => {
+    if (!viewportBounds) {
+      return null;
+    }
+    const center = [
+      (viewportBounds.minLat + viewportBounds.maxLat) / 2,
+      (viewportBounds.minLng + viewportBounds.maxLng) / 2
+    ];
+    return isValidCoords(center) ? center : null;
+  }, [viewportBounds]);
 
+  const getNearbyCenter = useCallback(() => {
+    if (isValidCoords(userLocation)) {
+      return userLocation;
+    }
+    const viewportCenter = getViewportCenter();
+    if (viewportCenter) {
+      return viewportCenter;
+    }
+    if (isValidCoords(mapCenter)) {
+      return mapCenter;
+    }
+    return null;
+  }, [getViewportCenter, mapCenter, userLocation]);
+
+  const fetchNearbyUsers = useCallback(
+    async (centerOverride) => {
+      const center = centerOverride || getNearbyCenter();
+      if (!center) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        
+        // Use socket for real-time data if available, otherwise fall back to HTTP
+        if (realtimeEnabled && socketService.isSocketConnected()) {
+          socketService.requestLocation(center, radius, true);
+        } else {
+          const response = await userService.getUsersNearby(center[0], center[1], radius);
+          setUsers(response.users.map(user => ({
+            ...user,
+            lastUpdateAt: user.lastUpdateAt || user.lastSeen || user.updatedAt
+          })));
+        }
+      } catch (error) {
+        console.error('Error fetching nearby users:', error);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [getNearbyCenter, radius, realtimeEnabled]
+  );
+
+  const scheduleNearbyFetch = useCallback(
+    (centerOverride) => {
+      if (nearbyFetchTimerRef.current) {
+        clearTimeout(nearbyFetchTimerRef.current);
+      }
+      nearbyFetchTimerRef.current = setTimeout(() => {
+        fetchNearbyUsers(centerOverride);
+      }, 450);
+    },
+    [fetchNearbyUsers]
+  );
+
+  useEffect(() => {
+    const center = getNearbyCenter();
+    if (!center) {
+      return;
+    }
+    scheduleNearbyFetch(center);
+  }, [getNearbyCenter, scheduleNearbyFetch, radius, realtimeEnabled]);
 
   // Utility functions
   const calculateDistance = (center, userCoords) => {
@@ -746,27 +827,6 @@ const Dashboard = () => {
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
     
     return Math.round(R * c * 100) / 100; // Distance in km with 2 decimal places
-  };
-
-  const fetchNearbyUsers = async () => {
-    try {
-      setLoading(true);
-      
-      // Use socket for real-time data if available, otherwise fall back to HTTP
-      if (realtimeEnabled && socketClient.isSocketConnected()) {
-        socketClient.requestLocation(mapCenter, radius, true);
-      } else {
-        const response = await userService.getUsersNearby(mapCenter[0], mapCenter[1], radius);
-        setUsers(response.data.users.map(user => ({
-          ...user,
-          lastUpdateAt: user.lastUpdateAt || user.lastSeen || user.updatedAt
-        })));
-      }
-    } catch (error) {
-      console.error('Error fetching nearby users:', error);
-    } finally {
-      setLoading(false);
-    }
   };
 
   const fetchAOs = async () => {
@@ -980,10 +1040,10 @@ const Dashboard = () => {
       setLoading(false);
     };
 
-    socketClient.on('location:response', handleLocationResponse);
+    socketService.on('location:response', handleLocationResponse);
 
     return () => {
-      socketClient.off('location:response', handleLocationResponse);
+      socketService.off('location:response', handleLocationResponse);
     };
   }, [realtimeEnabled, onlineUsers]);
 
@@ -1021,8 +1081,8 @@ const Dashboard = () => {
       lastLocationSentRef.current = { time: Date.now(), coords: nextCoords };
 
       try {
-        if (realtimeEnabledRef.current && socketClient.isSocketConnected()) {
-          socketClient.updateLocation([longitude, latitude]);
+        if (realtimeEnabledRef.current && socketService.isSocketConnected()) {
+          socketService.updateLocation([longitude, latitude]);
         } else {
           await userService.updateMyLocation([longitude, latitude]);
         }
@@ -1036,11 +1096,13 @@ const Dashboard = () => {
       async (position) => {
         const { latitude, longitude } = position.coords;
         const newLocation = [latitude, longitude];
-        setUserLocation(newLocation);
+        if (isValidCoords(newLocation)) {
+          setUserLocation(newLocation);
 
-        if (!hasCenteredMapRef.current) {
-          setMapCenter(newLocation);
-          hasCenteredMapRef.current = true;
+          if (!hasCenteredMapRef.current) {
+            setMapCenter(newLocation);
+            hasCenteredMapRef.current = true;
+          }
         }
 
         await sendLocation(latitude, longitude);
@@ -1451,12 +1513,22 @@ const Dashboard = () => {
 
             <div className="glass-card rounded-lg p-3">
               <p className="text-gold/60 text-sm mb-2">Location</p>
-              <p className="text-gold text-sm">
-                Lat: {selectedUser.location.coordinates[1].toFixed(6)}
-              </p>
-              <p className="text-gold text-sm">
-                Lng: {selectedUser.location.coordinates[0].toFixed(6)}
-              </p>
+              {(() => {
+                const coords = safeGetCoords(selectedUser);
+                if (!isValidCoords(coords)) {
+                  return <p className="text-gold/40 italic">No location yet</p>;
+                }
+                return (
+                  <>
+                    <p className="text-gold text-sm">
+                      Lat: {coords[1].toFixed(6)}
+                    </p>
+                    <p className="text-gold text-sm">
+                      Lng: {coords[0].toFixed(6)}
+                    </p>
+                  </>
+                );
+              })()}
             </div>
 
             <div className="glass-card rounded-lg p-3">

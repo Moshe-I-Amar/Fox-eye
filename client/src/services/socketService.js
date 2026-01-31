@@ -47,7 +47,7 @@ class SocketService {
         this.socket.on('disconnect', (reason) => {
           console.log('Socket disconnected:', reason);
           this.isConnected = false;
-          this.emit('disconnected', { reason });
+          this.emit('disconnect', { reason });
         });
 
         this.socket.on('connect_error', (error) => {
@@ -76,9 +76,12 @@ class SocketService {
         });
 
         // Location events
-        this.socket.on('location:updated', (data) => {
-          this.emit('location:updated', data);
-        });
+        const emitLocationUpdate = (data) => {
+          this.emit('location:update', data);
+        };
+
+        this.socket.on('location:update', emitLocationUpdate);
+        this.socket.on('location:updated', emitLocationUpdate);
 
         this.socket.on('location:updated:confirm', (data) => {
           this.emit('location:updated:confirm', data);
