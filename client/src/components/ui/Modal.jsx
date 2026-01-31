@@ -20,7 +20,7 @@ const Modal = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto animate-fade-in">
+    <div className="fixed inset-0 z-[10000] overflow-y-auto animate-fade-in">
       <div className="flex min-h-screen items-center justify-center p-4">
         <div 
           className="fixed inset-0 bg-black/60 backdrop-blur-sm"
