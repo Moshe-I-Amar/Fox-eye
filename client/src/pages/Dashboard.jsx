@@ -1102,7 +1102,7 @@ const Dashboard = () => {
         const payload = {
           name: trimmedName,
           polygon: aoDraft.polygon,
-          style: { color: aoForm.color, icon: trimmedIcon || null, pattern: aoForm.pattern || null },
+          style: { color: aoForm.color, icon: trimmedIcon, pattern: aoForm.pattern || '' },
           companyId: aoForm.companyId
         };
 
@@ -1116,7 +1116,7 @@ const Dashboard = () => {
       } else if (selectedAO) {
         const response = await aoService.updateAO(selectedAO._id, {
           name: trimmedName,
-          style: { color: aoForm.color, icon: trimmedIcon || null, pattern: aoForm.pattern || null },
+          style: { color: aoForm.color, icon: trimmedIcon, pattern: aoForm.pattern || '' },
           companyId: aoForm.companyId
         });
         const updatedAO = response?.ao;
