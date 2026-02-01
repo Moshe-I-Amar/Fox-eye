@@ -2,10 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import AdminRoute from './components/layout/AdminRoute';
+import AdminManagementRoute from './components/layout/AdminManagementRoute';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Admin from './pages/Admin';
+import AdminManagement from './pages/AdminManagement';
 import { authService } from './services/authApi';
 
 function App() {
@@ -67,6 +69,12 @@ function App() {
           <AdminRoute>
             <Admin />
           </AdminRoute>
+        } />
+
+        <Route path="/admin/management" element={
+          <AdminManagementRoute>
+            <AdminManagement />
+          </AdminManagementRoute>
         } />
         
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

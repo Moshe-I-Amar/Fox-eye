@@ -19,6 +19,13 @@ const resolveUserScope = async (user) => {
   const scope = emptyScope();
   const role = user.operationalRole || 'SQUAD_COMMANDER';
 
+  if (role === 'HQ' || role === 'UNIT_COMMANDER') {
+    return {
+      ...scope,
+      all: true
+    };
+  }
+
   if (role === 'SQUAD_COMMANDER') {
     return {
       ...scope,
@@ -52,28 +59,6 @@ const resolveUserScope = async (user) => {
       squads: extractIds(squadDocs),
       teams: teamIds,
       companies: user.companyId ? [user.companyId] : []
-    };
-  }
-
-  if (role === 'UNIT_COMMANDER' || role === 'HQ') {
-    const companyDocs = user.unitId
-      ? await Company.find({ parentId: user.unitId }, '_id').lean()
-      : [];
-    const companyIds = extractIds(companyDocs);
-    const teamDocs = companyIds.length
-      ? await Team.find({ parentId: { $in: companyIds } }, '_id').lean()
-      : [];
-    const teamIds = extractIds(teamDocs);
-    const squadDocs = teamIds.length
-      ? await Squad.find({ parentId: { $in: teamIds } }, '_id').lean()
-      : [];
-
-    return {
-      ...scope,
-      squads: extractIds(squadDocs),
-      teams: teamIds,
-      companies: companyIds,
-      units: user.unitId ? [user.unitId] : []
     };
   }
 

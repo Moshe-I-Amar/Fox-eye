@@ -15,6 +15,7 @@ const userRoutes = require('./routes/userRoutes');
 const aoRoutes = require('./routes/aoRoutes');
 const hierarchyRoutes = require('./routes/hierarchyRoutes');
 const violationRoutes = require('./routes/violationRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 
 const PORT = process.env.PORT || 5000;
 
@@ -110,6 +111,7 @@ const createApp = () => {
   app.use('/api/users', userRoutes);
   app.use('/api/aos', aoRoutes);
   app.use('/api/violations', violationRoutes);
+  app.use('/api/admin', adminRoutes);
 
   app.use('*', (req, res, next) => {
     next(new AppError('NOT_FOUND', 'Route not found', 404));

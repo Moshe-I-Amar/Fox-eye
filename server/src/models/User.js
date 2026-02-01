@@ -1,13 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
-
-const OPERATIONAL_ROLES = [
-  'SQUAD_COMMANDER',
-  'TEAM_COMMANDER',
-  'COMPANY_COMMANDER',
-  'UNIT_COMMANDER',
-  'HQ'
-];
+const { OPERATIONAL_ROLES } = require('../utils/roles');
 
 const userSchema = new mongoose.Schema({
   name: {
@@ -86,6 +79,10 @@ const userSchema = new mongoose.Schema({
   lastSeen: {
     type: Date,
     default: null
+  },
+  active: {
+    type: Boolean,
+    default: true
   }
 }, {
   timestamps: true

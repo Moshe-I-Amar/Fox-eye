@@ -18,6 +18,10 @@ const auth = asyncHandler(async (req, res, next) => {
     throw new AppError('AUTH_INVALID_TOKEN', 'Invalid token. User not found.', 401);
   }
 
+  if (user.active === false) {
+    throw new AppError('AUTH_INACTIVE', 'User account is inactive.', 403);
+  }
+
   req.userDoc = user;
   req.user = {
     id: user._id.toString(),
@@ -46,4 +50,18 @@ const requireRole = (roles) => {
   };
 };
 
-module.exports = { auth, requireRole };
+const requireOperationalRole = (roles) => {
+  return (req, res, next) => {
+    if (!req.user) {
+      return next(new AppError('AUTH_REQUIRED', 'Access denied. Authentication required.', 401));
+    }
+
+    if (!roles.includes(req.user.operationalRole)) {
+      return next(new AppError('FORBIDDEN', 'Access denied. Insufficient permissions.', 403));
+    }
+
+    next();
+  };
+};
+
+module.exports = { auth, requireRole, requireOperationalRole };

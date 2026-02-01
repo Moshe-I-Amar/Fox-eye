@@ -110,6 +110,10 @@ const login = asyncHandler(async (req, res) => {
     throw new AppError('AUTH_INVALID_CREDENTIALS', 'Invalid email or password', 401);
   }
 
+  if (user.active === false) {
+    throw new AppError('AUTH_INACTIVE', 'User account is inactive.', 403);
+  }
+
   const isMatch = await user.comparePassword(password);
   if (!isMatch) {
     throw new AppError('AUTH_INVALID_CREDENTIALS', 'Invalid email or password', 401);

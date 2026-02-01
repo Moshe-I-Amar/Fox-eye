@@ -77,6 +77,10 @@ const filterByScope = (items, scope) => {
     return [];
   }
 
+  if (scope?.all) {
+    return items;
+  }
+
   const scopeSets = normalizeScope(scope);
   const hasAnyScope =
     scopeSets.squads.size ||
@@ -98,6 +102,10 @@ const filterAssetsByScope = (assets, scope) => filterByScope(assets, scope);
 const filterEventsByScope = (events, scope) => filterByScope(events, scope);
 
 const buildScopeQuery = (scope) => {
+  if (scope?.all) {
+    return {};
+  }
+
   const squads = normalizeScopeValues(scope?.squads);
   const teams = normalizeScopeValues(scope?.teams);
   const companies = normalizeScopeValues(scope?.companies);

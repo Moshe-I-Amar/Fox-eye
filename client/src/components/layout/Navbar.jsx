@@ -111,11 +111,20 @@ const Navbar = ({ realtimeStatus = 'offline' }) => {
                 Welcome, {user.name}
               </span>
               {user.role === 'admin' && (
-                <Link to="/admin">
-                  <Button variant="outline" size="small">
-                    Admin
-                  </Button>
-                </Link>
+                <>
+                  <Link to="/admin">
+                    <Button variant="outline" size="small">
+                      Admin
+                    </Button>
+                  </Link>
+                  {['HQ', 'UNIT_COMMANDER'].includes(user.operationalRole) && (
+                    <Link to="/admin/management">
+                      <Button variant="outline" size="small">
+                        Management
+                      </Button>
+                    </Link>
+                  )}
+                </>
               )}
               <Button onClick={handleLogout} variant="ghost" size="small">
                 Logout
