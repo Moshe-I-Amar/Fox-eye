@@ -238,6 +238,36 @@ class SocketService {
     return this.breachService.evaluateAoBreach({ user, coordinates, timestamp });
   }
 
+  emitAoToCompanyScope(companyId, event, payload) {
+    if (!companyId || !event) {
+      return;
+    }
+
+    const targetCompanyId = String(companyId);
+
+    for (const [socketId, recipientInfo] of this.presenceService.getUserSocketEntries()) {
+      if (!recipientInfo) {
+        continue;
+      }
+
+      if (recipientInfo.role === 'admin') {
+        this.io.to(socketId).emit(event, payload);
+        continue;
+      }
+
+      const userCompanyId = recipientInfo.userInfo?.companyId ? String(recipientInfo.userInfo.companyId) : null;
+      if (userCompanyId && userCompanyId === targetCompanyId) {
+        this.io.to(socketId).emit(event, payload);
+        continue;
+      }
+
+      const scopeCompanies = (recipientInfo.userScope?.companies || []).map((id) => String(id));
+      if (scopeCompanies.includes(targetCompanyId)) {
+        this.io.to(socketId).emit(event, payload);
+      }
+    }
+  }
+
   // Utility methods
   emitToUser(userId, event, data) {
     return this.presenceService.emitToUser(userId, event, data);

@@ -239,6 +239,7 @@ const MapComponent = ({
   aos = [],
   onAOCreate,
   onAOEdit,
+  onAODelete,
   onAOSelect,
   featureGroupRef,
   canManageAOs = false,
@@ -324,6 +325,7 @@ const MapComponent = ({
             position="topright"
             onCreated={onAOCreate}
             onEdited={onAOEdit}
+            onDeleted={onAODelete}
             draw={{
               polygon: {
                 allowIntersection: false,
@@ -347,7 +349,7 @@ const MapComponent = ({
                   fillOpacity: 0.25
                 }
               },
-              remove: false
+              remove: true
             }}
           />
         )}
@@ -1041,6 +1043,50 @@ const Dashboard = () => {
     }
   };
 
+  const handleAODelete = async (event) => {
+    if (!event?.layers) {
+      return;
+    }
+
+    const aoIds = [];
+    event.layers.eachLayer((layer) => {
+      const aoId = layer?.options?.aoId;
+      if (aoId) {
+        aoIds.push(aoId);
+      }
+    });
+
+    if (!aoIds.length) {
+      return;
+    }
+
+    try {
+      setAoSaving(true);
+      const results = await Promise.allSettled(
+        aoIds.map((aoId) => aoService.deleteAO(aoId).then(() => aoId))
+      );
+      const deletedIds = results
+        .filter((result) => result.status === 'fulfilled')
+        .map((result) => result.value);
+
+      if (deletedIds.length) {
+        setAos((prev) => prev.filter((ao) => !deletedIds.includes(ao._id)));
+        setSelectedAO((prev) => (prev && deletedIds.includes(prev._id) ? null : prev));
+      }
+
+      if (results.some((result) => result.status === 'rejected')) {
+        setAoError('Failed to delete one or more overlays. Refresh to retry.');
+        fetchAOs();
+      }
+    } catch (error) {
+      console.error('Error deleting AO:', error);
+      setAoError('Failed to delete overlay. Please try again.');
+      fetchAOs();
+    } finally {
+      setAoSaving(false);
+    }
+  };
+
   const handleAOSelect = (ao) => {
     if (!canManageAOs) {
       return;
@@ -1180,6 +1226,59 @@ const Dashboard = () => {
       socketService.off('location:response', handleLocationResponse);
     };
   }, [realtimeEnabled, onlineUsers]);
+
+  useEffect(() => {
+    if (!realtimeEnabled) {
+      return;
+    }
+
+    const upsertAo = (incoming) => {
+      if (!incoming?._id) {
+        return;
+      }
+      setAos((prev) => {
+        const index = prev.findIndex((ao) => ao._id === incoming._id);
+        if (index === -1) {
+          return [incoming, ...prev];
+        }
+        const next = [...prev];
+        next[index] = incoming;
+        return next;
+      });
+    };
+
+    const handleAoCreated = (data) => {
+      if (data?.ao) {
+        upsertAo(data.ao);
+      }
+    };
+
+    const handleAoUpdated = (data) => {
+      if (data?.ao) {
+        upsertAo(data.ao);
+        setSelectedAO((prev) => (prev && prev._id === data.ao._id ? data.ao : prev));
+      }
+    };
+
+    const handleAoDeleted = (data) => {
+      const aoId = data?.aoId || data?.ao?._id;
+      if (!aoId) {
+        return;
+      }
+      setAos((prev) => prev.filter((ao) => ao._id !== aoId));
+      setSelectedAO((prev) => (prev && prev._id === aoId ? null : prev));
+    };
+
+    socketService.on('ao:created', handleAoCreated);
+    socketService.on('ao:updated', handleAoUpdated);
+    socketService.on('ao:deleted', handleAoDeleted);
+
+    return () => {
+      socketService.off('ao:created', handleAoCreated);
+      socketService.off('ao:updated', handleAoUpdated);
+      socketService.off('ao:deleted', handleAoDeleted);
+    };
+  }, [realtimeEnabled]);
 
   useEffect(() => {
     setLocationLoading(true);
@@ -1606,6 +1705,7 @@ const Dashboard = () => {
               aos={aos}
               onAOCreate={handleAOCreate}
               onAOEdit={handleAOEdit}
+              onAODelete={handleAODelete}
               onAOSelect={handleAOSelect}
               featureGroupRef={featureGroupRef}
               canManageAOs={canManageAOs}

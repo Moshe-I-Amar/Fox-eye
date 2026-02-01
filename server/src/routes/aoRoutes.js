@@ -10,12 +10,14 @@ const {
   listAOs,
   createAO,
   updateAO,
-  setAOActive
+  setAOActive,
+  deleteAO
 } = require('../controllers/aoController');
 
 router.get('/', auth, listAOs);
 router.post('/', auth, validateAOCreate, createAO);
 router.put('/:id', auth, validateAOUpdate, updateAO);
 router.patch('/:id/active', auth, validateAOActive, setAOActive);
+router.delete('/:id', auth, deleteAO);
 
 module.exports = router;

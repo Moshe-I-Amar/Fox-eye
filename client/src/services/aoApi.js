@@ -20,5 +20,10 @@ export const aoService = {
   setAOActive: async (id, active) => {
     const response = await api.patch(`/api/aos/${id}/active`, { active });
     return response.data.data;
+  },
+
+  deleteAO: async (id) => {
+    const response = await api.delete(`/api/aos/${id}`);
+    return response.data.data;
   }
 };

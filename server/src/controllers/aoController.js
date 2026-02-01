@@ -2,6 +2,7 @@ const AO = require('../models/AO');
 const Company = require('../models/Company');
 const asyncHandler = require('../utils/asyncHandler');
 const { AppError } = require('../utils/errors');
+const { getSocketService } = require('../realtime/socket');
 
 const isAdmin = (user) => user?.role === 'admin';
 const isCompanyCommander = (user) => user?.operationalRole === 'COMPANY_COMMANDER';
@@ -99,6 +100,13 @@ const createAO = asyncHandler(async (req, res) => {
     }
   });
 
+  try {
+    const socketService = getSocketService();
+    socketService.emitAoToCompanyScope(ao.companyId, 'ao:created', { ao });
+  } catch (error) {
+    console.warn('AO socket emit failed:', error.message);
+  }
+
   res.status(201).json({
     success: true,
     data: { ao }
@@ -124,6 +132,7 @@ const updateAO = asyncHandler(async (req, res) => {
   }
 
   const updates = {};
+  const previousCompanyId = ao.companyId ? ao.companyId.toString() : null;
   const { name, polygon, style, companyId } = req.body;
 
   if (name !== undefined) {
@@ -162,6 +171,19 @@ const updateAO = asyncHandler(async (req, res) => {
     { new: true, runValidators: true }
   );
 
+  try {
+    const socketService = getSocketService();
+    const nextCompanyId = updatedAO?.companyId ? updatedAO.companyId.toString() : null;
+    if (previousCompanyId && nextCompanyId && previousCompanyId !== nextCompanyId) {
+      socketService.emitAoToCompanyScope(previousCompanyId, 'ao:deleted', { aoId: updatedAO._id.toString() });
+      socketService.emitAoToCompanyScope(nextCompanyId, 'ao:updated', { ao: updatedAO });
+    } else {
+      socketService.emitAoToCompanyScope(updatedAO.companyId, 'ao:updated', { ao: updatedAO });
+    }
+  } catch (error) {
+    console.warn('AO socket emit failed:', error.message);
+  }
+
   res.json({
     success: true,
     data: { ao: updatedAO }
@@ -185,9 +207,45 @@ const setAOActive = asyncHandler(async (req, res) => {
   ao.active = req.body.active;
   await ao.save();
 
+  try {
+    const socketService = getSocketService();
+    socketService.emitAoToCompanyScope(ao.companyId, 'ao:updated', { ao });
+  } catch (error) {
+    console.warn('AO socket emit failed:', error.message);
+  }
+
   res.json({
     success: true,
     data: { ao }
+  });
+});
+
+const deleteAO = asyncHandler(async (req, res) => {
+  if (!isAdmin(req.user) && !isCompanyCommander(req.user)) {
+    throw new AppError('FORBIDDEN', 'Access denied. Insufficient permissions.', 403);
+  }
+
+  const ao = await AO.findById(req.params.id);
+  if (!ao) {
+    throw new AppError('NOT_FOUND', 'AO not found', 404);
+  }
+
+  if (!hasCompanyAccess(req.user, ao.companyId)) {
+    throw new AppError('FORBIDDEN', 'Access denied. Insufficient permissions.', 403);
+  }
+
+  await ao.deleteOne();
+
+  try {
+    const socketService = getSocketService();
+    socketService.emitAoToCompanyScope(ao.companyId, 'ao:deleted', { aoId: ao._id.toString() });
+  } catch (error) {
+    console.warn('AO socket emit failed:', error.message);
+  }
+
+  res.json({
+    success: true,
+    data: { aoId: ao._id.toString() }
   });
 });
 
@@ -195,5 +253,6 @@ module.exports = {
   listAOs,
   createAO,
   updateAO,
-  setAOActive
+  setAOActive,
+  deleteAO
 };
