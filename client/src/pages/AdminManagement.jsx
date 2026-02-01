@@ -514,7 +514,7 @@ const AdminManagement = () => {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-xl font-semibold text-gold">Hierarchy</h2>
-                <p className="text-xs text-gold/50">Unit > Company > Team > Squad</p>
+                <p className="text-xs text-gold/50">Unit {'>'} Company {'>'} Team {'>'} Squad</p>
               </div>
             </div>
             {hierarchyLoading ? (
