@@ -7,7 +7,7 @@
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "seed:demo": "node src/scripts/seedDemoHierarchy.js",
-    "test": "node --test src"
+    "test": "node --test \"src/**/*.test.js\""
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
