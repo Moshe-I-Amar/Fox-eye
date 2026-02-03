@@ -5,6 +5,10 @@
 .env.production.local
 .env.development.local
 .env.test.local
+server/.env
+server/.env.example
+client/.env
+client/.env.example
 
 # IDE
 .vscode/
