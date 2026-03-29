@@ -137,6 +137,21 @@ class PresenceManager {
       console.error('Failed to persist presence batch:', error);
     });
   }
+
+  /**
+   * Resets all users marked online in the DB to offline.
+   * Must be called once at server startup to clear stale presence state
+   * left by a previous crash or unclean shutdown.
+   */
+  static async resetStalePresence() {
+    const result = await User.updateMany(
+      { online: true },
+      { $set: { online: false, lastSeen: new Date() } }
+    );
+    if (result.modifiedCount > 0) {
+      console.log(`Presence reset: cleared ${result.modifiedCount} stale online user(s)`);
+    }
+  }
 }
 
 module.exports = PresenceManager;

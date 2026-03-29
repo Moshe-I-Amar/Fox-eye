@@ -6,6 +6,7 @@ const rateLimit = require('express-rate-limit');
 const http = require('http');
 const mongoose = require('mongoose');
 const { connectDB, disconnectDB } = require('./config/db');
+const PresenceManager = require('./utils/presenceManager');
 const errorHandler = require('./middleware/errorHandler');
 const { AppError } = require('./utils/errors');
 const { initSocket, closeSocket, getIO } = require('./realtime/socket');
@@ -136,6 +137,7 @@ const createApp = () => {
 const startServer = async () => {
   const app = createApp();
   await connectDB();
+  await PresenceManager.resetStalePresence();
 
   const server = http.createServer(app);
   initSocket(server);
