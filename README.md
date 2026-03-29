@@ -1,99 +1,94 @@
-# GeoMap
+# Fox-Eye (GeoMap)
 
-GeoMap is a full-stack web app for real-time, map-based tracking and operational oversight.
-It supports user location updates, geofenced areas of operation (AOs), and violation events.
-Admins can manage hierarchical units (units, companies, teams, squads) and user access.
-The client provides a live map dashboard and admin consoles, while the server exposes REST and Socket.IO APIs.
+Fox-Eye is a full-stack real-time operational tracking and geofencing app for hierarchical military-style organizations.
+Users share live location on an interactive Leaflet map; admins define Areas of Operations (AOs) as GeoJSON polygons;
+the system detects boundary breaches and fires real-time alerts via Socket.IO.
 
 ## Tech Stack
 
 **Client**
-- React + React Router
-- Vite
-- Tailwind CSS
-- Leaflet / React-Leaflet (+ draw tools)
-- Axios
+- React 18 + React Router
+- Vite 5
+- Tailwind CSS (custom dark/gold theme)
+- Leaflet 1.9 / React-Leaflet 4.x (+ draw tools)
+- Axios (with JWT interceptors)
 - Socket.IO Client
 
 **Server**
-- Node.js + Express
-- MongoDB + Mongoose
-- Socket.IO
-- JWT (jsonwebtoken)
+- Node.js + Express 4.x (CommonJS)
+- MongoDB + Mongoose 8.x
+- Socket.IO 4.x
+- JWT (jsonwebtoken + bcryptjs)
 - express-validator, express-rate-limit, helmet, cors
 
 **Tooling**
-- ESLint
-- Nodemon
+- ESLint, Nodemon
 
 ## High-level Architecture
 
-- **Client**: React SPA with route guards and page-level features (Dashboard, Admin, Admin Management).
-  Data access is centralized in `src/services` (REST via Axios, realtime via Socket.IO), and shared UI is organized under `src/components`.
-- **Server**: Express app with a layered structure:
-  - **Routes** map HTTP endpoints to controllers.
-  - **Controllers** handle request orchestration and response shaping.
-  - **Services** implement domain logic (presence, viewport updates, AO breach detection, admin audit logging).
-  - **Models** define MongoDB schemas for users, hierarchy, AOs, and violation events.
-  - **Middleware** handles JWT auth, role checks, validation, and error handling.
-- **Realtime**: Socket.IO is initialized alongside the HTTP server and authenticated via middleware. The socket service publishes presence and location updates and runs AO breach evaluation.
-- **Cross-cutting concerns**: input validation (express-validator), request logging, centralized error handling, security headers (helmet), CORS, and rate limiting are applied in the server app.
+**Client** — React SPA with route guards and page-level features (Dashboard, Admin, Admin Management).
+Data access is centralized in `src/services` (REST via Axios, realtime via Socket.IO), and shared UI lives under `src/components`.
+
+**Server** — Express app with a clean layered structure:
+- **Routes** — map HTTP endpoints to controllers.
+- **Controllers** — thin orchestrators: parse request, call services, shape response.
+- **Services** — all domain logic lives here (user queries, AO CRUD + Socket emissions, breach detection, presence tracking, audit logging, hierarchy tree building).
+- **Models** — Mongoose schemas for users, hierarchy entities, AOs, and violation events.
+- **Middleware** — JWT auth (`auth.js`), role/scope guards, centralized authorization predicates (`authorize.js`), validation, and error handling.
+- **Utils** — `withTransaction.js` wraps admin writes in MongoDB transactions (with graceful fallback on standalone instances); `asyncHandler` and `AppError` standardize controller error flow.
+
+**Realtime** — Socket.IO is initialized alongside the HTTP server and authenticated via middleware. The socket service publishes scoped presence/location updates and drives AO breach evaluation (APPROACHING_BOUNDARY → BREACH → SUSTAINED_BREACH).
+
+**Cross-cutting** — input validation, centralized error handling, security headers (helmet), CORS (multi-origin), and rate limiting are applied globally in the Express bootstrap.
 
 ## Repository Structure
 
 ```
 .
-|-- client/
-|   |-- src/
-|   |   |-- components/        # Reusable UI and layout components
-|   |   |-- pages/             # Route-level screens (dashboard/admin/auth)
-|   |   |-- services/          # REST + Socket.IO clients
-|   |   |-- styles/            # Global styles and Tailwind setup
-|   |   `-- utils/             # Client helpers
-|   |-- index.html
-|   `-- vite.config.js
-|-- server/
-|   |-- src/
-|   |   |-- config/            # DB connection and runtime config
-|   |   |-- controllers/       # HTTP controller handlers
-|   |   |-- middleware/        # Auth, validation, error handling, socket auth
-|   |   |-- models/            # Mongoose schemas
-|   |   |-- realtime/          # Socket.IO initialization
-|   |   |-- routes/            # API route definitions
-|   |   |-- scripts/           # Seed and maintenance scripts
-|   |   |-- services/          # Domain services (presence, breach, viewport)
-|   |   `-- utils/             # Shared helpers and validators
-|   `-- src/app.js             # Express app bootstrap
-`-- README.md
+├── client/
+│   └── src/
+│       ├── components/        # Reusable UI (Button, Card, Input, Modal) and layout (Navbar, route guards)
+│       ├── pages/             # Dashboard, Admin, AdminManagement, Login, Register
+│       ├── services/          # REST API clients (api.js, authApi, usersApi, aoApi, adminApi, violationsApi) + socketService
+│       ├── styles/            # Global styles and Tailwind setup
+│       └── utils/             # Client helpers (location validation)
+├── server/
+│   └── src/
+│       ├── config/            # DB connection (with retry logic)
+│       ├── controllers/       # Thin HTTP handlers (auth, users, AOs, hierarchy, violations, admin)
+│       ├── middleware/        # auth.js, authorize.js, socketAuth, errorHandler, validators
+│       ├── models/            # User, AO, ViolationEvent, Company, Unit, Team, Squad, AdminAuditLog
+│       ├── realtime/          # Socket.IO initialization (socket.js, getIO/getSocketService)
+│       ├── routes/            # Route definitions
+│       ├── scripts/           # seedDemoHierarchy.js
+│       ├── services/          # userService, aoService, violationService, hierarchyService,
+│       │                      #   breachService, locationService, presenceService,
+│       │                      #   socketService, adminAuditService, scopeResolver
+│       └── utils/             # withTransaction, asyncHandler, AppError, presenceManager,
+│                              #   aoDetection, validators, roles, filterByScope
+└── README.md
 ```
 
 ## Setup & Run (Local)
 
 ### Prerequisites
 - Node.js (LTS recommended)
-- MongoDB running locally or reachable from your environment
+- MongoDB running locally or accessible from your environment
 
 ### Install
 
 ```bash
-# Client
-cd client
-npm install
-
-# Server
-cd ../server
-npm install
+cd client && npm install
+cd ../server && npm install
 ```
 
 ### Configure Environment
 
-Create local env files from the examples:
-
 ```bash
-# Client
+# In client/
 cp .env.example .env
 
-# Server
+# In server/
 cp .env.example .env
 ```
 
@@ -101,27 +96,23 @@ cp .env.example .env
 
 ```bash
 # Server (from server/)
-npm run dev
+npm run dev        # nodemon on port 5000
 
 # Client (from client/)
-npm run dev
+npm run dev        # Vite on port 5173
 ```
 
 ### Run (Production)
 
 ```bash
-# Server (from server/)
+# Server
 npm start
 
-# Client (from client/)
-npm run build
-npm run preview
+# Client
+npm run build && npm run preview
 ```
 
 ## Required Environment Variables
-
-Use the existing `.env.example` files as templates and provide values locally.
-Only variable names are listed below (no values).
 
 **Server (`server/.env.example`)**
 ```
@@ -129,7 +120,7 @@ PORT
 MONGO_URI
 JWT_SECRET
 JWT_EXPIRES_IN
-CLIENT_ORIGIN
+CLIENT_ORIGIN                        # comma-separated for multiple origins
 NODE_ENV
 DB_CONNECT_RETRIES
 DB_CONNECT_RETRY_DELAY_MS
@@ -151,47 +142,68 @@ VITE_API_URL
 ## Scripts
 
 **Client** (`client/package.json`)
-- `dev` - Start Vite dev server
-- `build` - Production build
-- `preview` - Preview production build locally
-- `lint` - Run ESLint
+- `dev` — Vite dev server
+- `build` — Production build
+- `preview` — Preview production build
+- `lint` — ESLint
 
 **Server** (`server/package.json`)
-- `start` - Start server
-- `dev` - Start server with Nodemon
-- `seed:demo` - Seed demo hierarchy data
-- `test` - Run server tests
+- `start` — Start server
+- `dev` — Nodemon dev server
+- `seed:demo` — Seed demo hierarchy data
+- `test` — Run server tests
 
-## Usage (Safe)
+## Domain Model
 
-- Register or sign in, then open the dashboard to view your current location on the map.
-- Use the map controls to update your position and view nearby users.
-- Admins can manage users and hierarchy entities (units, companies, teams, squads).
-- Admins can create and manage AOs and review violation events.
+| Model | Key Fields |
+|-------|-----------|
+| `User` | email, role (admin/user), operationalRole (5-tier), location (GeoJSON Point + 2dsphere index), unit/company/team/squadId, online, lastSeen |
+| `AO` | GeoJSON Polygon, companyId, active, style (color, pattern, icon) |
+| `ViolationEvent` | type (APPROACHING_BOUNDARY \| BREACH \| SUSTAINED_BREACH), userId, aoId, coordinates, occurredAt |
+| `Company/Unit/Team/Squad` | Hierarchical org entities with parent refs |
+| `AdminAuditLog` | action, actorId, subject, companyId, timestamp |
 
-### API Endpoints (Minimal)
+**Operational role hierarchy (descending authority):**
+`HQ` > `UNIT_COMMANDER` > `COMPANY_COMMANDER` > `TEAM_LEADER` > `SQUAD_COMMANDER`
 
-- `GET /api/health`
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `GET /api/auth/me`
-- `GET /api/users`
-- `GET /api/users/near`
-- `PUT /api/users/me/location`
-- `GET /api/aos`
-- `POST /api/aos`
-- `GET /api/hierarchy/tree`
-- `GET /api/violations`
-- `GET /api/admin/hierarchy/tree`
+## API Endpoints
+
+```
+GET  /api/health
+POST /api/auth/register
+POST /api/auth/login
+GET  /api/auth/me
+
+GET  /api/users
+GET  /api/users/near
+PUT  /api/users/me/location
+
+GET  /api/aos
+POST /api/aos
+PUT  /api/aos/:id
+DELETE /api/aos/:id
+
+GET  /api/hierarchy/tree
+GET  /api/violations
+
+GET  /api/admin/hierarchy/tree
+POST /api/admin/companies
+POST /api/admin/units
+POST /api/admin/teams
+POST /api/admin/squads
+POST /api/admin/users
+PUT  /api/admin/users/:id
+DELETE /api/admin/...
+```
 
 ## Security Notes
 
 - Never commit `.env` files or real credentials.
-- Rotate secrets immediately if they are exposed.
+- Rotate secrets immediately if exposed.
 - Use least-privilege roles for admin operations.
-- Enforce HTTPS in production and restrict allowed origins.
+- Enforce HTTPS in production and restrict `CLIENT_ORIGIN` to known domains.
 
-## Roadmap / Known Limitations
+## Known Limitations
 
-- Add automated integration tests for realtime events and admin workflows.
-- Expand client-side error states and empty-state UX for admin lists.
+- Limited automated integration tests for realtime events and admin workflows.
+- Client-side error states and empty-state UX for admin lists need expansion.
