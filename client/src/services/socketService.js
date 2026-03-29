@@ -122,6 +122,19 @@ class SocketService {
           this.emit('ao:breach', data);
         });
 
+        // AO CRUD events
+        this.socket.on('ao:created', (data) => {
+          this.emit('ao:created', data);
+        });
+
+        this.socket.on('ao:updated', (data) => {
+          this.emit('ao:updated', data);
+        });
+
+        this.socket.on('ao:deleted', (data) => {
+          this.emit('ao:deleted', data);
+        });
+
       } catch (error) {
         reject(error);
       }

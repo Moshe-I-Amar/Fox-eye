@@ -469,6 +469,7 @@ const Dashboard = () => {
   const realtimeEnabledRef = useRef(realtimeEnabled);
   const hasCenteredMapRef = useRef(false);
   const lastLocationSentRef = useRef({ time: 0, coords: null });
+  const socketInitializedRef = useRef(false);
   const [viewportBounds, setViewportBounds] = useState(null);
   const [aos, setAos] = useState([]);
   const [aoLoading, setAoLoading] = useState(false);
@@ -572,12 +573,14 @@ const Dashboard = () => {
           await socketService.connect(token);
           setRealtimeEnabled(true);
           setRealtimeStatus('connected');
-          
+          socketInitializedRef.current = true;
+
           // Subscribe to presence updates
           socketService.subscribeToPresence();
-          
+
           console.log('Socket connected and authenticated');
         } catch (error) {
+          socketInitializedRef.current = true;
           const message = `${error?.message || ''}`.toLowerCase();
           if (message.includes('authentication error') || message.includes('token expired') || message.includes('invalid token')) {
             return;
@@ -789,7 +792,7 @@ const Dashboard = () => {
         // Use socket for real-time data if available, otherwise fall back to HTTP
         if (realtimeEnabled && socketService.isSocketConnected()) {
           socketService.requestLocation(center, radius, true);
-        } else {
+        } else if (socketInitializedRef.current) {
           const response = await userService.getUsersNearby(center[0], center[1], radius);
           setUsers(response.users.map(user => ({
             ...user,
@@ -1316,7 +1319,7 @@ const Dashboard = () => {
       try {
         if (realtimeEnabledRef.current && socketService.isSocketConnected()) {
           socketService.updateLocation([longitude, latitude]);
-        } else {
+        } else if (socketInitializedRef.current) {
           await userService.updateMyLocation([longitude, latitude]);
         }
       } catch (error) {
