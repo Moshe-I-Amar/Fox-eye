@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Skill(claude-api)",
-      "Bash(node -e \"require\\(''./src/controllers/authController''\\); require\\(''./src/controllers/adminController''\\); console.log\\(''OK''\\)\")"
-    ]
-  }
-}
