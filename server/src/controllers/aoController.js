@@ -3,9 +3,7 @@ const Company = require('../models/Company');
 const asyncHandler = require('../utils/asyncHandler');
 const { AppError } = require('../utils/errors');
 const { getSocketService } = require('../realtime/socket');
-
-const isAdmin = (user) => user?.role === 'admin';
-const isCompanyCommander = (user) => user?.operationalRole === 'COMPANY_COMMANDER';
+const { isAdmin, isCompanyCommander, hasCompanyAccess } = require('../middleware/authorize');
 
 const resolveCompanyScope = (req) => {
   if (req?.scope?.companies?.length) {
@@ -15,22 +13,6 @@ const resolveCompanyScope = (req) => {
     return [req.user.companyId];
   }
   return [];
-};
-
-const hasCompanyAccess = (user, companyId) => {
-  if (isAdmin(user)) {
-    return true;
-  }
-
-  if (!isCompanyCommander(user)) {
-    return false;
-  }
-
-  if (!companyId || !user?.companyId) {
-    return false;
-  }
-
-  return String(companyId) === String(user.companyId);
 };
 
 const listAOs = asyncHandler(async (req, res) => {
