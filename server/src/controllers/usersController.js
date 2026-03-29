@@ -1,59 +1,27 @@
-const User = require('../models/User');
-const { getSocketService } = require('../realtime/socket');
-const { buildScopeQuery } = require('../utils/filterByScope');
-const { LocationService } = require('../services/locationService');
 const asyncHandler = require('../utils/asyncHandler');
 const { AppError } = require('../utils/errors');
+const { buildScopeQuery } = require('../utils/filterByScope');
+const userService = require('../services/userService');
 
-const locationService = new LocationService();
+const EMPTY_PAGINATION = (page, limit) => ({ page, limit, total: 0, pages: 0 });
 
 const getAllUsers = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
-  const skip = (page - 1) * limit;
 
   const scopeQuery = buildScopeQuery(req.scope);
   if (!scopeQuery) {
-    const emptyPagination = { page, limit, total: 0, pages: 0 };
-    return res.json({
-      success: true,
-      data: { users: [], pagination: emptyPagination },
-      pagination: emptyPagination
-    });
+    const pagination = EMPTY_PAGINATION(page, limit);
+    return res.json({ success: true, data: { users: [], pagination }, pagination });
   }
 
-  const users = await User.find(scopeQuery)
-    .select('-password')
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit);
-
-  const total = await User.countDocuments(scopeQuery);
-  const pagination = {
-    page,
-    limit,
-    total,
-    pages: Math.ceil(total / limit)
-  };
-
-  res.json({
-    success: true,
-    data: { users, pagination },
-    pagination
-  });
+  const result = await userService.getUsers({ scopeQuery, page, limit });
+  res.json({ success: true, data: result, pagination: result.pagination });
 });
 
 const getUserById = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.params.id).select('-password');
-
-  if (!user) {
-    throw new AppError('NOT_FOUND', 'User not found', 404);
-  }
-
-  res.json({
-    success: true,
-    data: { user }
-  });
+  const user = await userService.getUserById(req.params.id);
+  res.json({ success: true, data: { user } });
 });
 
 const getUsersNearby = asyncHandler(async (req, res) => {
@@ -65,7 +33,7 @@ const getUsersNearby = asyncHandler(async (req, res) => {
 
   const latitude = parseFloat(lat);
   const longitude = parseFloat(lng);
-  const maxDistance = parseFloat(distance) * 1000;
+  const maxDistanceKm = parseFloat(distance);
 
   if (isNaN(latitude) || isNaN(longitude)) {
     throw new AppError('VALIDATION_ERROR', 'Invalid coordinates', 400);
@@ -75,88 +43,29 @@ const getUsersNearby = asyncHandler(async (req, res) => {
   if (!scopeQuery) {
     return res.json({
       success: true,
-      data: {
-        users: [],
-        center: {
-          lat: latitude,
-          lng: longitude,
-          radius: parseFloat(distance)
-        }
-      }
+      data: { users: [], center: { lat: latitude, lng: longitude, radius: maxDistanceKm } }
     });
   }
 
-  const users = await User.aggregate([
-    {
-      $geoNear: {
-        near: {
-          type: "Point",
-          coordinates: [longitude, latitude]
-        },
-        distanceField: "distance",
-        maxDistance: maxDistance,
-        spherical: true,
-        query: scopeQuery
-      }
-    },
-    {
-      $project: {
-        name: 1,
-        email: 1,
-        role: 1,
-        location: 1,
-        createdAt: 1,
-        distance: { $round: [{ $divide: ["$distance", 1000] }, 2] }
-      }
-    },
-    {
-      $sort: { distance: 1 }
-    }
-  ]);
+  const users = await userService.getUsersNearby({ lat: latitude, lng: longitude, maxDistanceKm, scopeQuery });
 
   res.json({
     success: true,
-    data: {
-      users,
-      center: {
-        lat: latitude,
-        lng: longitude,
-        radius: parseFloat(distance)
-      }
-    }
+    data: { users, center: { lat: latitude, lng: longitude, radius: maxDistanceKm } }
   });
 });
 
 const updateMyLocation = asyncHandler(async (req, res) => {
   const { coordinates } = req.body;
-  let socketService = null;
-  try {
-    socketService = getSocketService();
-  } catch (socketError) {
-    console.warn('Socket emit failed for location:update:', socketError.message);
-  }
-  const socketId = req.headers['x-socket-id'];
-  const { user, ao } = await locationService.updateUserLocation({
+  const excludeSocketId = req.headers['x-socket-id'];
+
+  const { user, ao } = await userService.updateUserLocation({
     userId: req.user?.id,
     coordinates,
-    socketService,
-    excludeSocketId: socketId,
-    suppressSocketErrors: true
+    excludeSocketId
   });
 
-  res.json({
-    success: true,
-    message: 'Location updated successfully',
-    data: {
-      user,
-      ao
-    }
-  });
+  res.json({ success: true, message: 'Location updated successfully', data: { user, ao } });
 });
 
-module.exports = {
-  getAllUsers,
-  getUserById,
-  getUsersNearby,
-  updateMyLocation
-};
+module.exports = { getAllUsers, getUserById, getUsersNearby, updateMyLocation };
