@@ -6,20 +6,18 @@ const logAdminAction = async ({
   targetType,
   targetId,
   before = null,
-  after = null
+  after = null,
+  session = null
 }) => {
   if (!action || !actorUserId || !targetType || !targetId) {
     return null;
   }
 
-  const entry = await AdminAuditLog.create({
-    action,
-    actorUserId,
-    targetType,
-    targetId,
-    before,
-    after
-  });
+  const options = session ? { session } : {};
+  const [entry] = await AdminAuditLog.create(
+    [{ action, actorUserId, targetType, targetId, before, after }],
+    options
+  );
 
   return entry;
 };

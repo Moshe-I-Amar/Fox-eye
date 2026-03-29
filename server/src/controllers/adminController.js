@@ -1,10 +1,14 @@
 const crypto = require('crypto');
+const Unit = require('../models/Unit');
 const Company = require('../models/Company');
+const Team = require('../models/Team');
+const Squad = require('../models/Squad');
 const User = require('../models/User');
 const asyncHandler = require('../utils/asyncHandler');
 const { AppError } = require('../utils/errors');
 const { OPERATIONAL_ROLES } = require('../utils/roles');
 const { logAdminAction } = require('../services/adminAuditService');
+const { withTransaction } = require('../utils/withTransaction');
 const {
   resolveHierarchyPath,
   ensureNoActiveChildren,
@@ -40,20 +44,21 @@ const createCompany = asyncHandler(async (req, res) => {
     throw new AppError('HIERARCHY_UNIT_NOT_FOUND', 'Unit not found', 400);
   }
 
-  const company = await Company.create({
-    name,
-    commanderId: commanderId || null,
-    parentId: unit._id,
-    active: active !== undefined ? !!active : true
-  });
-
-  await logAdminAction({
-    action: 'company.create',
-    actorUserId: req.user.id,
-    targetType: 'company',
-    targetId: company._id,
-    before: null,
-    after: company.toObject()
+  const company = await withTransaction(async (session) => {
+    const [doc] = await Company.create(
+      [{ name, commanderId: commanderId || null, parentId: unit._id, active: active !== undefined ? !!active : true }],
+      { session }
+    );
+    await logAdminAction({
+      action: 'company.create',
+      actorUserId: req.user.id,
+      targetType: 'company',
+      targetId: doc._id,
+      before: null,
+      after: doc.toObject(),
+      session
+    });
+    return doc;
   });
 
   res.status(201).json({
@@ -91,19 +96,22 @@ const updateCompany = asyncHandler(async (req, res) => {
     throw new AppError('VALIDATION_ERROR', 'No valid fields provided for update', 400);
   }
 
-  const updatedCompany = await Company.findByIdAndUpdate(
-    company._id,
-    updates,
-    { new: true, runValidators: true }
-  );
-
-  await logAdminAction({
-    action: 'company.update',
-    actorUserId: req.user.id,
-    targetType: 'company',
-    targetId: company._id,
-    before,
-    after: updatedCompany.toObject()
+  const updatedCompany = await withTransaction(async (session) => {
+    const doc = await Company.findByIdAndUpdate(
+      company._id,
+      updates,
+      { new: true, runValidators: true, session }
+    );
+    await logAdminAction({
+      action: 'company.update',
+      actorUserId: req.user.id,
+      targetType: 'company',
+      targetId: company._id,
+      before,
+      after: doc.toObject(),
+      session
+    });
+    return doc;
   });
 
   res.json({
@@ -122,16 +130,19 @@ const deleteCompany = asyncHandler(async (req, res) => {
   await ensureNoActiveChildren('company', company._id);
 
   const before = company.toObject();
-  company.active = false;
-  await company.save();
 
-  await logAdminAction({
-    action: 'company.deactivate',
-    actorUserId: req.user.id,
-    targetType: 'company',
-    targetId: company._id,
-    before,
-    after: company.toObject()
+  await withTransaction(async (session) => {
+    company.active = false;
+    await company.save({ session });
+    await logAdminAction({
+      action: 'company.deactivate',
+      actorUserId: req.user.id,
+      targetType: 'company',
+      targetId: company._id,
+      before,
+      after: company.toObject(),
+      session
+    });
   });
 
   res.json({
@@ -157,20 +168,21 @@ const createTeam = asyncHandler(async (req, res) => {
     throw new AppError('HIERARCHY_COMPANY_NOT_FOUND', 'Company not found', 400);
   }
 
-  const team = await Team.create({
-    name,
-    commanderId: commanderId || null,
-    parentId: company._id,
-    active: active !== undefined ? !!active : true
-  });
-
-  await logAdminAction({
-    action: 'team.create',
-    actorUserId: req.user.id,
-    targetType: 'team',
-    targetId: team._id,
-    before: null,
-    after: team.toObject()
+  const team = await withTransaction(async (session) => {
+    const [doc] = await Team.create(
+      [{ name, commanderId: commanderId || null, parentId: company._id, active: active !== undefined ? !!active : true }],
+      { session }
+    );
+    await logAdminAction({
+      action: 'team.create',
+      actorUserId: req.user.id,
+      targetType: 'team',
+      targetId: doc._id,
+      before: null,
+      after: doc.toObject(),
+      session
+    });
+    return doc;
   });
 
   res.status(201).json({
@@ -220,19 +232,22 @@ const updateTeam = asyncHandler(async (req, res) => {
     throw new AppError('VALIDATION_ERROR', 'No valid fields provided for update', 400);
   }
 
-  const updatedTeam = await Team.findByIdAndUpdate(
-    team._id,
-    updates,
-    { new: true, runValidators: true }
-  );
-
-  await logAdminAction({
-    action: 'team.update',
-    actorUserId: req.user.id,
-    targetType: 'team',
-    targetId: team._id,
-    before,
-    after: updatedTeam.toObject()
+  const updatedTeam = await withTransaction(async (session) => {
+    const doc = await Team.findByIdAndUpdate(
+      team._id,
+      updates,
+      { new: true, runValidators: true, session }
+    );
+    await logAdminAction({
+      action: 'team.update',
+      actorUserId: req.user.id,
+      targetType: 'team',
+      targetId: team._id,
+      before,
+      after: doc.toObject(),
+      session
+    });
+    return doc;
   });
 
   res.json({
@@ -253,16 +268,19 @@ const deleteTeam = asyncHandler(async (req, res) => {
 
   await ensureNoActiveChildren('team', team._id);
   const before = team.toObject();
-  team.active = false;
-  await team.save();
 
-  await logAdminAction({
-    action: 'team.deactivate',
-    actorUserId: req.user.id,
-    targetType: 'team',
-    targetId: team._id,
-    before,
-    after: team.toObject()
+  await withTransaction(async (session) => {
+    team.active = false;
+    await team.save({ session });
+    await logAdminAction({
+      action: 'team.deactivate',
+      actorUserId: req.user.id,
+      targetType: 'team',
+      targetId: team._id,
+      before,
+      after: team.toObject(),
+      session
+    });
   });
 
   res.json({
@@ -281,26 +299,26 @@ const createSquad = asyncHandler(async (req, res) => {
     throw new AppError('VALIDATION_ERROR', 'Team ID is required', 400);
   }
 
-  const team = await assertCompanyAccessFromTeam(req.user, teamId);
-  const teamDoc = team || await Team.findOne({ _id: teamId, active: true }).lean();
+  const teamDoc = await assertCompanyAccessFromTeam(req.user, teamId) || await Team.findOne({ _id: teamId, active: true }).lean();
   if (!teamDoc || teamDoc.active === false) {
     throw new AppError('HIERARCHY_TEAM_NOT_FOUND', 'Team not found', 400);
   }
 
-  const squad = await Squad.create({
-    name,
-    commanderId: commanderId || null,
-    parentId: teamDoc._id,
-    active: active !== undefined ? !!active : true
-  });
-
-  await logAdminAction({
-    action: 'squad.create',
-    actorUserId: req.user.id,
-    targetType: 'squad',
-    targetId: squad._id,
-    before: null,
-    after: squad.toObject()
+  const squad = await withTransaction(async (session) => {
+    const [doc] = await Squad.create(
+      [{ name, commanderId: commanderId || null, parentId: teamDoc._id, active: active !== undefined ? !!active : true }],
+      { session }
+    );
+    await logAdminAction({
+      action: 'squad.create',
+      actorUserId: req.user.id,
+      targetType: 'squad',
+      targetId: doc._id,
+      before: null,
+      after: doc.toObject(),
+      session
+    });
+    return doc;
   });
 
   res.status(201).json({
@@ -350,19 +368,22 @@ const updateSquad = asyncHandler(async (req, res) => {
     throw new AppError('VALIDATION_ERROR', 'No valid fields provided for update', 400);
   }
 
-  const updatedSquad = await Squad.findByIdAndUpdate(
-    squad._id,
-    updates,
-    { new: true, runValidators: true }
-  );
-
-  await logAdminAction({
-    action: 'squad.update',
-    actorUserId: req.user.id,
-    targetType: 'squad',
-    targetId: squad._id,
-    before,
-    after: updatedSquad.toObject()
+  const updatedSquad = await withTransaction(async (session) => {
+    const doc = await Squad.findByIdAndUpdate(
+      squad._id,
+      updates,
+      { new: true, runValidators: true, session }
+    );
+    await logAdminAction({
+      action: 'squad.update',
+      actorUserId: req.user.id,
+      targetType: 'squad',
+      targetId: squad._id,
+      before,
+      after: doc.toObject(),
+      session
+    });
+    return doc;
   });
 
   res.json({
@@ -383,16 +404,19 @@ const deleteSquad = asyncHandler(async (req, res) => {
 
   await ensureNoActiveChildren('squad', squad._id);
   const before = squad.toObject();
-  squad.active = false;
-  await squad.save();
 
-  await logAdminAction({
-    action: 'squad.deactivate',
-    actorUserId: req.user.id,
-    targetType: 'squad',
-    targetId: squad._id,
-    before,
-    after: squad.toObject()
+  await withTransaction(async (session) => {
+    squad.active = false;
+    await squad.save({ session });
+    await logAdminAction({
+      action: 'squad.deactivate',
+      actorUserId: req.user.id,
+      targetType: 'squad',
+      targetId: squad._id,
+      before,
+      after: squad.toObject(),
+      session
+    });
   });
 
   res.json({
@@ -429,13 +453,7 @@ const createUser = asyncHandler(async (req, res) => {
     throw new AppError('USER_EXISTS', 'User already exists with this email', 400);
   }
 
-  const hierarchy = await resolveHierarchyPath({
-    unitId,
-    companyId,
-    teamId,
-    squadId
-  });
-
+  const hierarchy = await resolveHierarchyPath({ unitId, companyId, teamId, squadId });
   assertCompanyAccess(req.user, hierarchy.companyId);
 
   let nextRole;
@@ -463,26 +481,32 @@ const createUser = asyncHandler(async (req, res) => {
     return tempPassword;
   })();
 
-  const user = await User.create({
-    name,
-    email,
-    password: assignedPassword,
-    role: nextRole,
-    operationalRole: nextOperationalRole,
-    unitId: hierarchy.unitId,
-    companyId: hierarchy.companyId,
-    teamId: hierarchy.teamId,
-    squadId: hierarchy.squadId,
-    active: active !== undefined ? !!active : true
-  });
-
-  await logAdminAction({
-    action: 'user.create',
-    actorUserId: req.user.id,
-    targetType: 'user',
-    targetId: user._id,
-    before: null,
-    after: sanitizeUserSnapshot(user.toObject())
+  const user = await withTransaction(async (session) => {
+    const [doc] = await User.create(
+      [{
+        name,
+        email,
+        password: assignedPassword,
+        role: nextRole,
+        operationalRole: nextOperationalRole,
+        unitId: hierarchy.unitId,
+        companyId: hierarchy.companyId,
+        teamId: hierarchy.teamId,
+        squadId: hierarchy.squadId,
+        active: active !== undefined ? !!active : true
+      }],
+      { session }
+    );
+    await logAdminAction({
+      action: 'user.create',
+      actorUserId: req.user.id,
+      targetType: 'user',
+      targetId: doc._id,
+      before: null,
+      after: sanitizeUserSnapshot(doc.toObject()),
+      session
+    });
+    return doc;
   });
 
   res.status(201).json({
@@ -550,12 +574,7 @@ const updateUser = asyncHandler(async (req, res) => {
     unitId !== undefined || companyId !== undefined || teamId !== undefined || squadId !== undefined;
 
   if (hasHierarchyUpdate) {
-    const hierarchy = await resolveHierarchyPath({
-      unitId,
-      companyId,
-      teamId,
-      squadId
-    });
+    const hierarchy = await resolveHierarchyPath({ unitId, companyId, teamId, squadId });
     updates.unitId = hierarchy.unitId;
     updates.companyId = hierarchy.companyId;
     updates.teamId = hierarchy.teamId;
@@ -569,19 +588,22 @@ const updateUser = asyncHandler(async (req, res) => {
     throw new AppError('VALIDATION_ERROR', 'No valid fields provided for update', 400);
   }
 
-  const updatedUser = await User.findByIdAndUpdate(
-    user._id,
-    updates,
-    { new: true, runValidators: true }
-  );
-
-  await logAdminAction({
-    action: 'user.update',
-    actorUserId: req.user.id,
-    targetType: 'user',
-    targetId: user._id,
-    before,
-    after: sanitizeUserSnapshot(updatedUser.toObject())
+  const updatedUser = await withTransaction(async (session) => {
+    const doc = await User.findByIdAndUpdate(
+      user._id,
+      updates,
+      { new: true, runValidators: true, session }
+    );
+    await logAdminAction({
+      action: 'user.update',
+      actorUserId: req.user.id,
+      targetType: 'user',
+      targetId: user._id,
+      before,
+      after: sanitizeUserSnapshot(doc.toObject()),
+      session
+    });
+    return doc;
   });
 
   res.json({
@@ -604,16 +626,19 @@ const setUserActive = asyncHandler(async (req, res) => {
   assertCompanyAccess(req.user, user.companyId);
 
   const before = sanitizeUserSnapshot(user.toObject());
-  user.active = !!active;
-  await user.save();
 
-  await logAdminAction({
-    action: active ? 'user.activate' : 'user.deactivate',
-    actorUserId: req.user.id,
-    targetType: 'user',
-    targetId: user._id,
-    before,
-    after: sanitizeUserSnapshot(user.toObject())
+  await withTransaction(async (session) => {
+    user.active = !!active;
+    await user.save({ session });
+    await logAdminAction({
+      action: active ? 'user.activate' : 'user.deactivate',
+      actorUserId: req.user.id,
+      targetType: 'user',
+      targetId: user._id,
+      before,
+      after: sanitizeUserSnapshot(user.toObject()),
+      session
+    });
   });
 
   res.json({
