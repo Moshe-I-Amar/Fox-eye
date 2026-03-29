@@ -1,7 +1,5 @@
 const crypto = require('crypto');
 const Company = require('../models/Company');
-const Team = require('../models/Team');
-const Squad = require('../models/Squad');
 const User = require('../models/User');
 const asyncHandler = require('../utils/asyncHandler');
 const { AppError } = require('../utils/errors');
@@ -12,58 +10,17 @@ const {
   ensureNoActiveChildren,
   getHierarchyTree
 } = require('../services/hierarchyService');
+const {
+  isCompanyCommander,
+  assertCompanyAccess,
+  assertCompanyAccessFromTeam,
+  assertCompanyAccessFromSquad
+} = require('../middleware/authorize');
 
-const isCompanyCommander = (user) => user?.operationalRole === 'COMPANY_COMMANDER';
 const sanitizeUserSnapshot = (snapshot) => {
-  if (!snapshot) {
-    return snapshot;
-  }
+  if (!snapshot) return snapshot;
   const { password, ...rest } = snapshot;
   return rest;
-};
-
-const ensureCompanyAccess = (user, companyId) => {
-  if (!isCompanyCommander(user)) {
-    return;
-  }
-
-  if (!companyId || !user?.companyId || String(companyId) !== String(user.companyId)) {
-    throw new AppError('FORBIDDEN', 'Access denied. Insufficient permissions.', 403);
-  }
-};
-
-const ensureCompanyAccessFromTeam = async (user, teamId) => {
-  if (!isCompanyCommander(user)) {
-    return null;
-  }
-  if (!teamId) {
-    throw new AppError('VALIDATION_ERROR', 'Team ID is required', 400);
-  }
-  const team = await Team.findById(teamId).lean();
-  if (!team) {
-    throw new AppError('NOT_FOUND', 'Team not found', 404);
-  }
-  ensureCompanyAccess(user, team.parentId);
-  return team;
-};
-
-const ensureCompanyAccessFromSquad = async (user, squadId) => {
-  if (!isCompanyCommander(user)) {
-    return null;
-  }
-  if (!squadId) {
-    throw new AppError('VALIDATION_ERROR', 'Squad ID is required', 400);
-  }
-  const squad = await Squad.findById(squadId).lean();
-  if (!squad) {
-    throw new AppError('NOT_FOUND', 'Squad not found', 404);
-  }
-  const team = await Team.findById(squad.parentId).lean();
-  if (!team) {
-    throw new AppError('NOT_FOUND', 'Team not found', 404);
-  }
-  ensureCompanyAccess(user, team.parentId);
-  return { squad, team };
 };
 
 
@@ -111,7 +68,7 @@ const updateCompany = asyncHandler(async (req, res) => {
     throw new AppError('NOT_FOUND', 'Company not found', 404);
   }
 
-  ensureCompanyAccess(req.user, company._id);
+  assertCompanyAccess(req.user, company._id);
 
   const before = company.toObject();
   const { name, commanderId, active } = req.body;
@@ -161,7 +118,7 @@ const deleteCompany = asyncHandler(async (req, res) => {
     throw new AppError('NOT_FOUND', 'Company not found', 404);
   }
 
-  ensureCompanyAccess(req.user, company._id);
+  assertCompanyAccess(req.user, company._id);
   await ensureNoActiveChildren('company', company._id);
 
   const before = company.toObject();
@@ -193,7 +150,7 @@ const createTeam = asyncHandler(async (req, res) => {
     throw new AppError('VALIDATION_ERROR', 'Company ID is required', 400);
   }
 
-  ensureCompanyAccess(req.user, companyId);
+  assertCompanyAccess(req.user, companyId);
 
   const company = await Company.findOne({ _id: companyId, active: true }).lean();
   if (!company) {
@@ -229,7 +186,7 @@ const updateTeam = asyncHandler(async (req, res) => {
   }
 
   if (isCompanyCommander(req.user)) {
-    ensureCompanyAccess(req.user, team.parentId);
+    assertCompanyAccess(req.user, team.parentId);
   }
 
   const before = team.toObject();
@@ -244,7 +201,7 @@ const updateTeam = asyncHandler(async (req, res) => {
   }
   if (companyId !== undefined) {
     if (isCompanyCommander(req.user)) {
-      ensureCompanyAccess(req.user, companyId);
+      assertCompanyAccess(req.user, companyId);
     }
     const company = await Company.findOne({ _id: companyId, active: true }).lean();
     if (!company) {
@@ -291,7 +248,7 @@ const deleteTeam = asyncHandler(async (req, res) => {
   }
 
   if (isCompanyCommander(req.user)) {
-    ensureCompanyAccess(req.user, team.parentId);
+    assertCompanyAccess(req.user, team.parentId);
   }
 
   await ensureNoActiveChildren('team', team._id);
@@ -324,7 +281,7 @@ const createSquad = asyncHandler(async (req, res) => {
     throw new AppError('VALIDATION_ERROR', 'Team ID is required', 400);
   }
 
-  const team = await ensureCompanyAccessFromTeam(req.user, teamId);
+  const team = await assertCompanyAccessFromTeam(req.user, teamId);
   const teamDoc = team || await Team.findOne({ _id: teamId, active: true }).lean();
   if (!teamDoc || teamDoc.active === false) {
     throw new AppError('HIERARCHY_TEAM_NOT_FOUND', 'Team not found', 400);
@@ -359,7 +316,7 @@ const updateSquad = asyncHandler(async (req, res) => {
   }
 
   if (isCompanyCommander(req.user)) {
-    await ensureCompanyAccessFromSquad(req.user, squad._id);
+    await assertCompanyAccessFromSquad(req.user, squad._id);
   }
 
   const before = squad.toObject();
@@ -378,7 +335,7 @@ const updateSquad = asyncHandler(async (req, res) => {
       throw new AppError('HIERARCHY_TEAM_NOT_FOUND', 'Team not found', 400);
     }
     if (isCompanyCommander(req.user)) {
-      ensureCompanyAccess(req.user, team.parentId);
+      assertCompanyAccess(req.user, team.parentId);
     }
     updates.parentId = team._id;
   }
@@ -421,7 +378,7 @@ const deleteSquad = asyncHandler(async (req, res) => {
   }
 
   if (isCompanyCommander(req.user)) {
-    await ensureCompanyAccessFromSquad(req.user, squad._id);
+    await assertCompanyAccessFromSquad(req.user, squad._id);
   }
 
   await ensureNoActiveChildren('squad', squad._id);
@@ -479,7 +436,7 @@ const createUser = asyncHandler(async (req, res) => {
     squadId
   });
 
-  ensureCompanyAccess(req.user, hierarchy.companyId);
+  assertCompanyAccess(req.user, hierarchy.companyId);
 
   let nextRole;
   let nextOperationalRole;
@@ -606,7 +563,7 @@ const updateUser = asyncHandler(async (req, res) => {
   }
 
   const companyScopeId = updates.companyId || user.companyId;
-  ensureCompanyAccess(req.user, companyScopeId);
+  assertCompanyAccess(req.user, companyScopeId);
 
   if (!Object.keys(updates).length) {
     throw new AppError('VALIDATION_ERROR', 'No valid fields provided for update', 400);
@@ -644,7 +601,7 @@ const setUserActive = asyncHandler(async (req, res) => {
     throw new AppError('NOT_FOUND', 'User not found', 404);
   }
 
-  ensureCompanyAccess(req.user, user.companyId);
+  assertCompanyAccess(req.user, user.companyId);
 
   const before = sanitizeUserSnapshot(user.toObject());
   user.active = !!active;
