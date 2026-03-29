@@ -12,6 +12,9 @@ client/.env
 client/.env.example
 agents/.env
 
+# Claude Code
+.claude/
+
 # IDE
 .vscode/
 .idea/
