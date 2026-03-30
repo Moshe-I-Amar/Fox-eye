@@ -8,12 +8,26 @@ import { aoService } from '../services/aoApi';
 import socketService from '../services/socketService';
 import { authService } from '../services/authApi';
 import { hierarchyService } from '../services/hierarchyApi';
-import { violationService } from '../services/violationsApi';
 import { isValidCoords, safeGetCoords } from '../utils/location';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Modal from '../components/ui/Modal';
+import AlertBanner from '../components/ui/AlertBanner';
+import Badge from '../components/ui/Badge';
 import Navbar from '../components/layout/Navbar';
+import {
+  DEFAULT_MAP_CENTER,
+  DEFAULT_MAP_ZOOM,
+  DEFAULT_SEARCH_RADIUS_KM,
+  DEFAULT_AO_COLOR,
+  DEFAULT_AO_ICON,
+  AO_ICON_MAX_LENGTH,
+  AO_NAME_MIN,
+  AO_NAME_MAX,
+  VIEWPORT_DEBOUNCE_MS,
+} from '../config/constants';
+import useAOs from '../hooks/useAOs';
+import useViolations from '../hooks/useViolations';
 
 const MapController = ({ center }) => {
   const map = useMap();
@@ -28,7 +42,7 @@ const MapController = ({ center }) => {
   return null;
 };
 
-const MapViewportSubscriber = ({ onViewportChange, debounceMs = 250 }) => {
+const MapViewportSubscriber = ({ onViewportChange, debounceMs = VIEWPORT_DEBOUNCE_MS }) => {
   const map = useMap();
   const debounceRef = useRef(null);
 
@@ -77,11 +91,6 @@ const MapViewportSubscriber = ({ onViewportChange, debounceMs = 250 }) => {
   return null;
 };
 
-const DEFAULT_AO_COLOR = '#C7A76C';
-const DEFAULT_AO_ICON = '';
-const AO_ICON_MAX_LENGTH = 6;
-const AO_NAME_MIN = 2;
-const AO_NAME_MAX = 100;
 
 const escapeXml = (value = '') =>
   value
@@ -101,53 +110,133 @@ const isValidIconValue = (value = '') => {
 
 const svgToDataUrl = (svg) => `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 
-const buildPinSvg = ({ color, icon, iconUrl }) => {
+/**
+ * Role-specific icon markup drawn inside the pin badge (viewBox 0 0 38 48).
+ * Badge area: circle cx=19 cy=19 r=13. All icons use white fill/stroke.
+ */
+const ROLE_ICON = {
+  // HQ — 5-point star
+  HQ: `<polygon points="19,9 21.2,15.9 27.6,16.2 22.6,20.2 24.3,26.3 19,22.8 13.7,26.3 15.4,20.2 10.4,16.2 16.8,15.9" fill="white" fill-opacity="0.95"/>`,
+
+  // UNIT_COMMANDER — 3 horizontal bars (colonel rank)
+  UNIT_COMMANDER: `
+    <rect x="10" y="12" width="18" height="2.5" rx="1.25" fill="white" fill-opacity="0.95"/>
+    <rect x="10" y="17.5" width="18" height="2.5" rx="1.25" fill="white" fill-opacity="0.95"/>
+    <rect x="10" y="23" width="18" height="2.5" rx="1.25" fill="white" fill-opacity="0.95"/>`,
+
+  // COMPANY_COMMANDER — 2 horizontal bars (captain rank)
+  COMPANY_COMMANDER: `
+    <rect x="10" y="14" width="18" height="2.5" rx="1.25" fill="white" fill-opacity="0.95"/>
+    <rect x="10" y="21" width="18" height="2.5" rx="1.25" fill="white" fill-opacity="0.95"/>`,
+
+  // TEAM_LEADER / TEAM_COMMANDER — chevron up
+  TEAM_LEADER: `<path d="M8 25 L19 11 L30 25" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.95"/>`,
+  TEAM_COMMANDER: `<path d="M8 25 L19 11 L30 25" stroke="white" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.95"/>`,
+
+  // SQUAD_COMMANDER — diamond
+  SQUAD_COMMANDER: `<polygon points="19,9 29,19 19,29 9,19" fill="white" fill-opacity="0.95"/>`,
+};
+
+/** Friendly display label for a role string */
+const ROLE_LABEL = {
+  HQ: 'HQ',
+  UNIT_COMMANDER: 'Unit Commander',
+  COMPANY_COMMANDER: 'Company Commander',
+  TEAM_LEADER: 'Team Leader',
+  TEAM_COMMANDER: 'Team Commander',
+  SQUAD_COMMANDER: 'Squad Commander',
+};
+
+/**
+ * User marker — teardrop pin with role-specific icon.
+ * Colored by company AO identity. Online dot at top-right corner.
+ */
+const buildUserPinSvg = ({ color, isOnline, operationalRole }) => {
+  const c = color || DEFAULT_AO_COLOR;
+  const roleMarkup = ROLE_ICON[operationalRole] ?? `
+    <circle cx="19" cy="14" r="5.5" fill="white" fill-opacity="0.95"/>
+    <path d="M7 29 C7 21 31 21 31 29" fill="white" fill-opacity="0.95"/>`;
+
+  const statusDot = isOnline
+    ? `<circle cx="29" cy="8" r="4.5" fill="#34d399" stroke="${c}" stroke-width="2"/>`
+    : `<circle cx="29" cy="8" r="4.5" fill="#4b5563" stroke="${c}" stroke-width="2"/>`;
+
+  return `<svg width="26" height="34" viewBox="0 0 38 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="ps" x="-30%" y="-20%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="rgba(0,0,0,0.55)"/>
+    </filter>
+  </defs>
+  <path d="M19 2 C9 2 1 10 1 20 C1 30 19 46 19 46 C19 46 37 30 37 20 C37 10 29 2 19 2Z"
+        fill="${c}" filter="url(#ps)"/>
+  <circle cx="19" cy="19" r="13" fill="rgba(0,0,0,0.28)"/>
+  ${roleMarkup}
+  ${statusDot}
+</svg>`;
+};
+
+/**
+ * Self marker — concentric gold rings with person icon.
+ * Visually distinct from other-user markers.
+ */
+const buildSelfDotSvg = ({ color }) => {
+  const c = color || DEFAULT_AO_COLOR;
+  return `<svg width="32" height="32" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="24" cy="24" r="23" fill="${c}" fill-opacity="0.12"/>
+  <circle cx="24" cy="24" r="17" fill="${c}" fill-opacity="0.25"/>
+  <circle cx="24" cy="24" r="12" fill="${c}"/>
+  <circle cx="24" cy="24" r="12" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="1.5"/>
+  <circle cx="24" cy="19" r="4" fill="#0a0a0a"/>
+  <path d="M13 33 C13 25 35 25 35 33" fill="#0a0a0a"/>
+</svg>`;
+};
+
+/**
+ * AO label marker — small pin/dot showing company icon on the map.
+ * Unchanged — keeps text/emoji icon support for AO overlays.
+ */
+const buildAoPinSvg = ({ color, icon, iconUrl }) => {
   const iconMarkup = iconUrl
-    ? `<image href="${iconUrl}" x="7" y="5" width="10" height="10" />`
+    ? `<image href="${iconUrl}" x="7" y="5" width="10" height="10"/>`
     : icon
       ? `<text x="12" y="11" text-anchor="middle" dominant-baseline="middle" font-size="6" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif">${escapeXml(icon)}</text>`
-      : `<circle cx="12" cy="10" r="2.5" fill="#ffffff" />`;
-
-  return `
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M12 2C8 13 2 20 2 20C2 20 12 20 20 20C20 20 16 13 12 2Z" fill="${color}" />
-      <circle cx="12" cy="10" r="4.5" fill="rgba(0,0,0,0.35)" />
-      ${iconMarkup}
-    </svg>
-  `.trim();
+      : `<circle cx="12" cy="10" r="2.5" fill="#ffffff"/>`;
+  return `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M12 2C8 13 2 20 2 20C2 20 12 20 20 20C20 20 16 13 12 2Z" fill="${color}"/>
+  <circle cx="12" cy="10" r="4.5" fill="rgba(0,0,0,0.35)"/>
+  ${iconMarkup}
+</svg>`;
 };
 
-const buildDotSvg = ({ color, icon, iconUrl }) => {
-  const iconMarkup = iconUrl
-    ? `<image href="${iconUrl}" x="10" y="10" width="12" height="12" />`
-    : icon
-      ? `<text x="16" y="16" text-anchor="middle" dominant-baseline="middle" font-size="7" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif">${escapeXml(icon)}</text>`
-      : `<circle cx="16" cy="16" r="3" fill="#0a0a0a" />`;
+const createUserMarkerIcon = ({ color, isOnline = false, operationalRole = '', className = '' }) =>
+  new Icon({
+    iconUrl: svgToDataUrl(buildUserPinSvg({ color, isOnline, operationalRole })),
+    iconSize: [26, 34],
+    iconAnchor: [13, 33],
+    popupAnchor: [0, -34],
+    className,
+  });
 
-  return `
-    <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <circle cx="16" cy="16" r="10" fill="${color}" fill-opacity="0.25" />
-      <circle cx="16" cy="16" r="5" fill="${color}" />
-      ${iconMarkup}
-    </svg>
-  `.trim();
-};
+const createSelfMarkerIcon = ({ color, className = '' }) =>
+  new Icon({
+    iconUrl: svgToDataUrl(buildSelfDotSvg({ color })),
+    iconSize: [32, 32],
+    iconAnchor: [16, 16],
+    popupAnchor: [0, -20],
+    className,
+  });
 
 const createAoMarkerIcon = ({ color, icon, className = '', variant = 'pin' }) => {
   const safeColor = color || DEFAULT_AO_COLOR;
   const trimmedIcon = `${icon || DEFAULT_AO_ICON}`.trim();
   const iconUrl = trimmedIcon && isImageUrl(trimmedIcon) ? trimmedIcon : '';
   const iconText = iconUrl ? '' : trimmedIcon;
-  const svg = variant === 'dot'
-    ? buildDotSvg({ color: safeColor, icon: iconText, iconUrl })
-    : buildPinSvg({ color: safeColor, icon: iconText, iconUrl });
-
   return new Icon({
-    iconUrl: svgToDataUrl(svg),
+    iconUrl: svgToDataUrl(buildAoPinSvg({ color: safeColor, icon: iconText, iconUrl })),
     iconSize: [32, 32],
     iconAnchor: variant === 'dot' ? [16, 16] : [16, 32],
     popupAnchor: variant === 'dot' ? [0, -16] : [0, -32],
-    className
+    className,
   });
 };
 
@@ -269,19 +358,20 @@ const MapComponent = ({
   );
 
   const getMarkerIcon = useCallback(
-    ({ point, className = '', variant = 'pin' }) => {
+    ({ point, className = '', variant = 'pin', isOnline = false, operationalRole = '' }) => {
       const ao = getAoForPoint(point);
       const companyIdentity = ao && getCompanyIdentity ? getCompanyIdentity(ao) : null;
       const color = companyIdentity?.color || DEFAULT_AO_COLOR;
-      const icon = companyIdentity?.icon || DEFAULT_AO_ICON;
-      const cacheKey = `${variant}:${className}:${color}:${icon}`;
+
+      if (variant === 'dot') {
+        const cacheKey = `self:${className}:${color}`;
+        return getCachedIcon(cacheKey, () => createSelfMarkerIcon({ color, className }));
+      }
+
+      // 'pin' → role-specific person marker
+      const cacheKey = `user:${className}:${color}:${isOnline}:${operationalRole}`;
       return getCachedIcon(cacheKey, () =>
-        createAoMarkerIcon({
-          color,
-          icon,
-          className,
-          variant
-        })
+        createUserMarkerIcon({ color, isOnline, operationalRole, className })
       );
     },
     [getAoForPoint, getCachedIcon]
@@ -307,12 +397,12 @@ const MapComponent = ({
   return (
     <MapContainer
       center={center}
-      zoom={13}
+      zoom={DEFAULT_MAP_ZOOM}
       style={{ height: '100%', width: '100%' }}
       className="rounded-xl"
     >
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
         url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
       />
       
@@ -393,26 +483,36 @@ const MapComponent = ({
         ))}
       </FeatureGroup>
       
-      {/* User's current location marker */}
+      {/* Self location marker */}
       {isValidCoords(userLocation) && (
         <Marker
           position={userLocation}
           icon={getMarkerIcon({
             point: [userLocation[1], userLocation[0]],
-            variant: 'dot'
+            variant: 'dot',
           })}
         >
-          <Popup>
-            <div className="text-jet">
-              <p className="font-semibold text-blue-600">Your Location</p>
-              <p className="text-sm text-gray-600">
-                {userLocation[0].toFixed(6)}, {userLocation[1].toFixed(6)}
-              </p>
+          <Popup className="marker-popup-dark">
+            <div className="map-popup">
+              <div className="map-popup-header">
+                <span className="map-popup-avatar self">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="8" r="4"/>
+                    <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+                  </svg>
+                </span>
+                <div>
+                  <p className="map-popup-name">You</p>
+                  <p className="map-popup-sub">{userLocation[0].toFixed(5)}, {userLocation[1].toFixed(5)}</p>
+                </div>
+              </div>
+              <span className="map-popup-badge online">● LIVE</span>
             </div>
           </Popup>
         </Marker>
       )}
-      
+
+      {/* Other users' markers */}
       {users
         .map((user) => ({ user, coords: safeGetCoords(user) }))
         .filter(({ coords }) => isValidCoords(coords))
@@ -420,27 +520,39 @@ const MapComponent = ({
           <Marker
             key={user._id}
             position={[coords[1], coords[0]]}
-            icon={
-              getMarkerIcon({
-                point: coords,
-                className: liveUpdateIds.has(user._id) ? 'marker-live-update' : '',
-                variant: 'pin'
-              })
-            }
-            eventHandlers={{
-              click: () => onUserClick(user)
-            }}
+            icon={getMarkerIcon({
+              point: coords,
+              className: liveUpdateIds.has(user._id) ? 'marker-live-update' : '',
+              variant: 'pin',
+              isOnline: Boolean(user.isOnline || user.online),
+              operationalRole: user.operationalRole || '',
+            })}
+            eventHandlers={{ click: () => onUserClick(user) }}
           >
-            <Popup>
-              <div className="text-jet">
-                <p className="font-semibold">{user.name}</p>
-                <p className="text-sm text-gray-600">{user.email}</p>
-                <p className={`text-xs ${user.isOnline ? 'text-green-600' : 'text-gray-500'}`}>
-                  {user.isOnline ? 'Online' : 'Offline'}
-                </p>
-                {user.distance && (
-                  <p className="text-xs text-gray-500">{user.distance} km away</p>
-                )}
+            <Popup className="marker-popup-dark">
+              <div className="map-popup">
+                <div className="map-popup-header">
+                  <span className="map-popup-avatar">
+                    {user.name?.charAt(0)?.toUpperCase() || '?'}
+                  </span>
+                  <div>
+                    <p className="map-popup-name">{user.name}</p>
+                    {user.operationalRole && (
+                      <p className="map-popup-role">
+                        {ROLE_LABEL[user.operationalRole] || user.operationalRole}
+                      </p>
+                    )}
+                    <p className="map-popup-sub">{user.email}</p>
+                  </div>
+                </div>
+                <div className="map-popup-footer">
+                  <span className={`map-popup-badge ${(user.isOnline || user.online) ? 'online' : 'offline'}`}>
+                    {(user.isOnline || user.online) ? '● ONLINE' : '○ OFFLINE'}
+                  </span>
+                  {user.distance && (
+                    <span className="map-popup-dist">{user.distance} km away</span>
+                  )}
+                </div>
               </div>
             </Popup>
           </Marker>
@@ -450,12 +562,13 @@ const MapComponent = ({
 };
 
 const Dashboard = () => {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedUser, setSelectedUser] = useState(null);
-  const [userLocation, setUserLocation] = useState([40.7128, -74.0060]); // Default: NYC
-  const [mapCenter, setMapCenter] = useState([40.7128, -74.0060]);
-  const [radius, setRadius] = useState(10);
+  const [userLocation, setUserLocation] = useState(DEFAULT_MAP_CENTER);
+  const [mapCenter, setMapCenter] = useState(DEFAULT_MAP_CENTER);
+  const [radius, setRadius] = useState(DEFAULT_SEARCH_RADIUS_KM);
   const [locationLoading, setLocationLoading] = useState(false);
   const [locationError, setLocationError] = useState('');
   const [onlineUsers, setOnlineUsers] = useState(new Set());
@@ -471,9 +584,7 @@ const Dashboard = () => {
   const lastLocationSentRef = useRef({ time: 0, coords: null });
   const socketInitializedRef = useRef(false);
   const [viewportBounds, setViewportBounds] = useState(null);
-  const [aos, setAos] = useState([]);
-  const [aoLoading, setAoLoading] = useState(false);
-  const [aoError, setAoError] = useState('');
+  const { aos, setAos, loading: aoLoading, error: aoError, setError: setAoError, refetch: fetchAOs } = useAOs();
   const [aoDraft, setAoDraft] = useState(null);
   const [aoModalMode, setAoModalMode] = useState('create');
   const [aoForm, setAoForm] = useState({ name: '', color: DEFAULT_AO_COLOR, icon: '', pattern: '', companyId: '' });
@@ -481,9 +592,6 @@ const Dashboard = () => {
   const [aoNameError, setAoNameError] = useState('');
   const [selectedAO, setSelectedAO] = useState(null);
   const [aoSaving, setAoSaving] = useState(false);
-  const [violations, setViolations] = useState([]);
-  const [violationLoading, setViolationLoading] = useState(false);
-  const [violationError, setViolationError] = useState('');
   const [violationFilters, setViolationFilters] = useState({
     severity: 'all',
     companyId: '',
@@ -504,6 +612,7 @@ const Dashboard = () => {
   const canViewViolations =
     currentUser?.role === 'admin' ||
     ['HQ', 'UNIT_COMMANDER'].includes(currentUser?.operationalRole);
+  const { violations, loading: violationLoading, error: violationError } = useViolations(canViewViolations, violationFilters);
   const navigate = useNavigate();
 
   // Initialize socket connection
@@ -585,7 +694,6 @@ const Dashboard = () => {
           if (message.includes('authentication error') || message.includes('token expired') || message.includes('invalid token')) {
             return;
           }
-          console.error('Failed to connect socket:', error);
           setRealtimeEnabled(false);
           setRealtimeStatus('offline');
         }
@@ -664,7 +772,6 @@ const Dashboard = () => {
     };
 
     const handleLocationUpdate = (data) => {
-      console.log('Received location update:', data);
 
       if (!isValidCoords(data?.coordinates)) {
         return;
@@ -729,7 +836,6 @@ const Dashboard = () => {
     };
 
     const handleSocketError = (error) => {
-      console.error('Socket error:', error);
     };
 
     socketService.on('location:update', handleLocationUpdate);
@@ -800,7 +906,6 @@ const Dashboard = () => {
           })));
         }
       } catch (error) {
-        console.error('Error fetching nearby users:', error);
       } finally {
         setLoading(false);
       }
@@ -845,23 +950,8 @@ const Dashboard = () => {
     return Math.round(R * c * 100) / 100; // Distance in km with 2 decimal places
   };
 
-  const fetchAOs = async () => {
-    try {
-      setAoLoading(true);
-      setAoError('');
-      const response = await aoService.getAOs();
-      setAos(response?.aos || []);
-    } catch (error) {
-      console.error('Error fetching AOs:', error);
-      setAoError('Failed to load area overlays. Please try again.');
-    } finally {
-      setAoLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchAOs();
-  }, []);
+  // AOs are fetched by the useAOs hook on mount
+  useEffect(() => { fetchAOs(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let isActive = true;
@@ -889,7 +979,6 @@ const Dashboard = () => {
         setHierarchyMap({ units, companies, teams, squads });
         setCompanyOptions(data.companies || []);
       } catch (error) {
-        console.warn('Failed to load hierarchy metadata:', error);
       }
     };
 
@@ -900,41 +989,7 @@ const Dashboard = () => {
     };
   }, []);
 
-  const fetchViolations = useCallback(async () => {
-    if (!canViewViolations) {
-      return;
-    }
-    try {
-      setViolationLoading(true);
-      setViolationError('');
-      const params = {
-        limit: 20
-      };
-      if (violationFilters.severity && violationFilters.severity !== 'all') {
-        params.severity = violationFilters.severity;
-      }
-      if (violationFilters.companyId) {
-        params.companyId = violationFilters.companyId;
-      }
-      if (violationFilters.start) {
-        params.start = violationFilters.start;
-      }
-      if (violationFilters.end) {
-        params.end = violationFilters.end;
-      }
-      const response = await violationService.getViolations(params);
-      setViolations(response.violations || []);
-    } catch (error) {
-      console.error('Error loading violation history:', error);
-      setViolationError('Failed to load violation history.');
-    } finally {
-      setViolationLoading(false);
-    }
-  }, [canViewViolations, violationFilters]);
-
-  useEffect(() => {
-    fetchViolations();
-  }, [fetchViolations]);
+  // violations, violationLoading, violationError are managed by useViolations hook above
 
   const visibleCompanies = useMemo(() => {
     if (currentUser?.role === 'admin') {
@@ -1039,7 +1094,6 @@ const Dashboard = () => {
         })
       );
     } catch (error) {
-      console.error('Error updating AO geometry:', error);
       setAoError('Failed to update AO geometry. Please try again.');
     } finally {
       setAoSaving(false);
@@ -1082,7 +1136,6 @@ const Dashboard = () => {
         fetchAOs();
       }
     } catch (error) {
-      console.error('Error deleting AO:', error);
       setAoError('Failed to delete overlay. Please try again.');
       fetchAOs();
     } finally {
@@ -1187,7 +1240,6 @@ const Dashboard = () => {
         setSelectedAO(null);
       }
     } catch (error) {
-      console.error('Error saving AO:', error);
       setAoError('Failed to save AO. Please try again.');
     } finally {
       setAoSaving(false);
@@ -1202,7 +1254,6 @@ const Dashboard = () => {
         prev.map((item) => (item._id === ao._id ? { ...item, active: nextActive } : item))
       );
     } catch (error) {
-      console.error('Error updating AO status:', error);
       setAoError('Failed to update AO status. Please try again.');
     }
   };
@@ -1214,7 +1265,6 @@ const Dashboard = () => {
     if (!realtimeEnabled) return;
 
     const handleLocationResponse = (data) => {
-      console.log('Received location response:', data);
       setUsers(data.users.map(user => ({
         ...user,
         isOnline: onlineUsers.has(user._id),
@@ -1323,7 +1373,6 @@ const Dashboard = () => {
           await userService.updateMyLocation([longitude, latitude]);
         }
       } catch (error) {
-        console.error('Error updating location:', error);
         setLocationError('Failed to update location. Please try again.');
       }
     };
@@ -1446,21 +1495,31 @@ const Dashboard = () => {
 
       {realtimeNotice && (
         <div className="px-6 pt-4">
-          <div
-            className={`rounded-xl border px-4 py-3 text-sm ${
-              realtimeNoticeTone === 'error'
-                ? 'border-red-500/40 bg-red-500/10 text-red-300'
-                : 'border-gold/30 bg-gold/10 text-gold/80'
-            }`}
-          >
-            {realtimeNotice}
-          </div>
+          <AlertBanner
+            message={realtimeNotice}
+            tone={realtimeNoticeTone === 'error' ? 'error' : 'warning'}
+            onDismiss={() => setRealtimeNotice('')}
+          />
         </div>
       )}
       
-      <div className="flex h-[calc(100vh-80px)]">
+      {/* Mobile sidebar toggle */}
+      <div className="lg:hidden flex items-center gap-2 px-4 pt-3">
+        <button
+          onClick={() => setSidebarOpen((o) => !o)}
+          className="flex items-center gap-2 rounded-lg border border-gold/30 bg-gold/5 px-3 py-2 text-gold text-sm min-h-[44px] min-w-[44px]"
+          aria-label="Toggle sidebar"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+          <span>{sidebarOpen ? 'Hide Panel' : 'Show Panel'}</span>
+        </button>
+      </div>
+
+      <div className="flex flex-col lg:flex-row lg:h-[calc(100vh-80px)]">
         {/* Left Panel - User List */}
-        <div className="w-80 glass-card border-r border-gold/20 p-6 overflow-hidden flex flex-col">
+        <div className={`${sidebarOpen ? 'flex' : 'hidden'} lg:flex w-full lg:w-80 glass-card border-b lg:border-b-0 lg:border-r border-gold/20 p-6 overflow-hidden flex-col lg:h-full max-h-[60vh] lg:max-h-none`}>
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-xl font-bold text-gold">Nearby Users</h2>
             <div className="flex items-center space-x-2">
@@ -1520,7 +1579,13 @@ const Dashboard = () => {
                 {aoLoading ? (
                   <div className="text-xs text-gold/50">Loading overlays...</div>
                 ) : aos.length === 0 ? (
-                  <div className="text-xs text-gold/50">No overlays yet. Draw one on the map.</div>
+                  <div className="flex flex-col items-center py-4 text-gold/40 gap-1">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                    </svg>
+                    <p className="text-xs">No AOs defined yet</p>
+                    {canManageAOs && <p className="text-[10px] text-gold/30">Draw one on the map above</p>}
+                  </div>
                 ) : (
                   aos.map((ao) => (
                     <div
@@ -1618,7 +1683,12 @@ const Dashboard = () => {
                   {violationLoading ? (
                     <div className="text-xs text-gold/50">Loading violations...</div>
                   ) : violations.length === 0 ? (
-                    <div className="text-xs text-gold/50">No violations found.</div>
+                    <div className="flex flex-col items-center py-4 text-gold/40 gap-1">
+                      <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <p className="text-xs">No violations recorded</p>
+                    </div>
                   ) : (
                     violations.map((violation) => (
                       <button
@@ -1696,8 +1766,8 @@ const Dashboard = () => {
         </div>
 
         {/* Map */}
-        <div className="flex-1 p-6">
-          <Card className="h-full p-0">
+        <div className="flex-1 p-4 lg:p-6 min-h-[50vh] lg:min-h-0">
+          <Card className="h-full min-h-[50vh] lg:min-h-0 p-0">
             <MapComponent
               center={mapCenter}
               users={users}

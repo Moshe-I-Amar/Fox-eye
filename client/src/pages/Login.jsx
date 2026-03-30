@@ -64,7 +64,7 @@ const Login = () => {
             </svg>
           </div>
           <h1 className="text-3xl font-bold text-gold mb-2">Welcome Back</h1>
-          <p className="text-gold/60">Sign in to your GeoMap account</p>
+          <p className="text-gold/60">Sign in to your Fox-Eye account</p>
         </div>
 
         <Card glass goldBorder>
