@@ -9,6 +9,9 @@ import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Input from '../components/ui/Input';
 import Modal from '../components/ui/Modal';
+import AlertBanner from '../components/ui/AlertBanner';
+import Badge from '../components/ui/Badge';
+import Table from '../components/ui/Table';
 import Navbar from '../components/layout/Navbar';
 
 const Admin = () => {
@@ -110,13 +113,11 @@ const Admin = () => {
           // Subscribe to presence updates
           socketService.subscribeToPresence();
           
-          console.log('Admin socket connected and authenticated');
         } catch (error) {
           const message = `${error?.message || ''}`.toLowerCase();
           if (message.includes('authentication error') || message.includes('token expired') || message.includes('invalid token')) {
             return;
           }
-          console.error('Failed to connect admin socket:', error);
           setRealtimeEnabled(false);
           setRealtimeStatus('offline');
         }
@@ -141,7 +142,6 @@ const Admin = () => {
     if (!realtimeEnabled) return;
 
     const handleAdminLocationUpdate = (data) => {
-      console.log('Admin received location update:', data);
       
       // Update user in the list if present
       setUsers(prevUsers => 
@@ -266,7 +266,6 @@ const Admin = () => {
 
         setHierarchyMap({ units, companies, teams, squads });
       } catch (error) {
-        console.warn('Failed to load hierarchy metadata:', error);
       }
     };
 
@@ -297,7 +296,6 @@ const Admin = () => {
         ...response.pagination
       }));
     } catch (error) {
-      console.error('Error fetching users:', error);
     } finally {
       setLoading(false);
     }
@@ -335,15 +333,11 @@ const Admin = () => {
 
       {realtimeNotice && (
         <div className="px-6 pt-4">
-          <div
-            className={`rounded-xl border px-4 py-3 text-sm ${
-              realtimeNoticeTone === 'error'
-                ? 'border-red-500/40 bg-red-500/10 text-red-300'
-                : 'border-gold/30 bg-gold/10 text-gold/80'
-            }`}
-          >
-            {realtimeNotice}
-          </div>
+          <AlertBanner
+            message={realtimeNotice}
+            tone={realtimeNoticeTone === 'error' ? 'error' : 'warning'}
+            onDismiss={() => setRealtimeNotice('')}
+          />
         </div>
       )}
 
@@ -414,126 +408,101 @@ const Admin = () => {
 
           {/* Users Table */}
           <Card glass>
-            <div className="overflow-x-auto">
-              {loading ? (
-                <div className="space-y-4">
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <div key={i} className="glass-card rounded-lg p-4 loading-skeleton h-16" />
-                  ))}
-                </div>
-              ) : (
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gold/20">
-                      <th className="text-left py-3 px-4 text-gold font-medium">User</th>
-                      <th className="text-left py-3 px-4 text-gold font-medium">Email</th>
-                      <th className="text-left py-3 px-4 text-gold font-medium">Role</th>
-                      <th className="text-left py-3 px-4 text-gold font-medium">Joined</th>
-                      <th className="text-left py-3 px-4 text-gold font-medium">Location</th>
-                      <th className="text-left py-3 px-4 text-gold font-medium">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredUsers.length === 0 ? (
-                      <tr>
-                        <td colSpan="6" className="text-center py-8 text-gold/60">
-                          {searchTerm ? 'No users found matching your search' : 'No users found'}
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredUsers.map((user) => (
-                        <tr key={user._id} className="border-b border-gold/10 hover:bg-gold/5 transition-colors">
-                          <td className="py-3 px-4">
-                            <div className="flex items-center space-x-3">
-                              <div className="w-8 h-8 bg-gradient-to-r from-gold to-gold-light rounded-full flex items-center justify-center text-jet text-sm font-bold">
-                                {user.name.charAt(0).toUpperCase()}
-                              </div>
-                              <span className="text-gold">{user.name}</span>
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 text-gold/80">{user.email}</td>
-                          <td className="py-3 px-4">
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                              user.role === 'admin' 
-                                ? 'bg-gold/20 text-gold' 
-                                : 'bg-slate-medium/20 text-slate-medium'
-                            }`}>
-                              {user.role}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-gold/60">
-                            <div className="flex flex-col space-y-1">
-                              <span>{new Date(user.createdAt).toLocaleDateString()}</span>
-                              {user.lastSeen && (
-                                <span className="text-xs text-gold/40">
-                                  Last seen: {new Date(user.lastSeen).toLocaleTimeString()}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4">
-                            <div className="flex items-center space-x-2">
-                              {onlineUsers.has(user._id) && (
-                                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                              )}
-                              {(() => {
-                                const coords = safeGetCoords(user);
-                                const hasCoords =
-                                  isValidCoords(coords) && !(coords[0] === 0 && coords[1] === 0);
-                                if (!hasCoords) {
-                                  return <span className="text-gold/40">No location yet</span>;
-                                }
-                                return (
-                                  <span className="text-xs text-gold/60">
-                                    {coords[1].toFixed(2)}, {coords[0].toFixed(2)}
-                                  </span>
-                                );
-                              })()}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4">
-                            <Button
-                              variant="outline"
-                              size="small"
-                              onClick={() => handleUserClick(user)}
-                            >
-                              View
-                            </Button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              )}
-            </div>
+            <Table
+              loading={loading}
+              data={filteredUsers}
+              pageSize={0}
+              emptyMessage={searchTerm ? 'No users match your search' : 'No users found'}
+              columns={[
+                {
+                  key: 'name',
+                  label: 'User',
+                  sortable: true,
+                  render: (_, user) => (
+                    <div className="flex items-center space-x-3">
+                      <div className="relative">
+                        <div className="w-8 h-8 bg-gradient-to-r from-gold to-gold-light rounded-full flex items-center justify-center text-jet text-sm font-bold">
+                          {user.name.charAt(0).toUpperCase()}
+                        </div>
+                        {onlineUsers.has(user._id) && (
+                          <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-jet" title="Online" />
+                        )}
+                      </div>
+                      <span className="text-gold">{user.name}</span>
+                    </div>
+                  )
+                },
+                {
+                  key: 'email',
+                  label: 'Email',
+                  sortable: true,
+                  render: (v) => <span className="text-gold/80">{v}</span>
+                },
+                {
+                  key: 'role',
+                  label: 'Role',
+                  render: (v) => (
+                    <Badge variant={v === 'admin' ? 'gold' : 'gray'}>{v}</Badge>
+                  )
+                },
+                {
+                  key: 'createdAt',
+                  label: 'Joined',
+                  sortable: true,
+                  render: (v, user) => (
+                    <div className="flex flex-col">
+                      <span className="text-gold/60">{new Date(v).toLocaleDateString()}</span>
+                      {user.lastSeen && (
+                        <span className="text-xs text-gold/40">
+                          Last seen: {new Date(user.lastSeen).toLocaleTimeString()}
+                        </span>
+                      )}
+                    </div>
+                  )
+                },
+                {
+                  key: 'location',
+                  label: 'Location',
+                  render: (_, user) => {
+                    const coords = safeGetCoords(user);
+                    const hasCoords = isValidCoords(coords) && !(coords[0] === 0 && coords[1] === 0);
+                    if (!hasCoords) return <span className="text-gold/40 italic">No location yet</span>;
+                    return <span className="text-xs text-gold/60">{coords[1].toFixed(2)}, {coords[0].toFixed(2)}</span>;
+                  }
+                },
+                {
+                  key: '_id',
+                  label: 'Actions',
+                  render: (_, user) => (
+                    <Button variant="outline" size="sm" onClick={() => handleUserClick(user)}>
+                      View
+                    </Button>
+                  )
+                }
+              ]}
+            />
 
-            {/* Pagination */}
+            {/* Server-side pagination */}
             {pagination.pages > 1 && (
               <div className="flex items-center justify-between mt-6 pt-6 border-t border-gold/20">
                 <div className="text-gold/60 text-sm">
-                  Showing {((pagination.page - 1) * pagination.limit) + 1} to{' '}
+                  Showing {((pagination.page - 1) * pagination.limit) + 1}–
                   {Math.min(pagination.page * pagination.limit, pagination.total)} of{' '}
                   {pagination.total} users
                 </div>
-                
-                <div className="flex space-x-2">
+                <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
-                    size="small"
+                    size="sm"
                     onClick={() => handlePageChange(pagination.page - 1)}
                     disabled={pagination.page === 1}
                   >
                     Previous
                   </Button>
-                  
-                  <span className="flex items-center px-3 text-gold">
-                    {pagination.page} / {pagination.pages}
-                  </span>
-                  
+                  <span className="text-gold text-sm">{pagination.page} / {pagination.pages}</span>
                   <Button
                     variant="outline"
-                    size="small"
+                    size="sm"
                     onClick={() => handlePageChange(pagination.page + 1)}
                     disabled={pagination.page === pagination.pages}
                   >

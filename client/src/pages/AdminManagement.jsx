@@ -5,7 +5,11 @@ import Card from '../components/ui/Card';
 import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
 import Modal from '../components/ui/Modal';
+import AlertBanner from '../components/ui/AlertBanner';
+import Badge from '../components/ui/Badge';
+import Table from '../components/ui/Table';
 import { adminApi } from '../services/adminApi';
+import { authService } from '../services/authApi';
 
 const operationalRoles = [
   'SQUAD_COMMANDER',
@@ -14,6 +18,14 @@ const operationalRoles = [
   'UNIT_COMMANDER',
   'HQ'
 ];
+
+const OPERATIONAL_ROLE_RANK = {
+  SQUAD_COMMANDER: 1,
+  TEAM_COMMANDER: 2,
+  COMPANY_COMMANDER: 3,
+  UNIT_COMMANDER: 4,
+  HQ: 5
+};
 
 const emptyCompanyForm = {
   name: '',
@@ -67,6 +79,14 @@ const AdminManagement = () => {
   const [teamForm, setTeamForm] = useState(emptyTeamForm);
   const [squadForm, setSquadForm] = useState(emptySquadForm);
   const [userForm, setUserForm] = useState(emptyUserForm);
+  const [roleForm, setRoleForm] = useState({ role: 'user', operationalRole: 'SQUAD_COMMANDER' });
+
+  const currentUser = useMemo(() => authService.getCurrentUser(), []);
+
+  const allowableOperationalRoles = useMemo(() => {
+    const actorRank = OPERATIONAL_ROLE_RANK[currentUser?.operationalRole] ?? 0;
+    return operationalRoles.filter((r) => OPERATIONAL_ROLE_RANK[r] < actorRank);
+  }, [currentUser]);
 
   const hierarchyMap = useMemo(() => {
     const map = { units: {}, companies: {}, teams: {}, squads: {} };
@@ -252,6 +272,12 @@ const AdminManagement = () => {
         active: data?.active !== false
       });
     }
+    if (type === 'userRoles') {
+      setRoleForm({
+        role: data?.role || 'user',
+        operationalRole: data?.operationalRole || 'SQUAD_COMMANDER'
+      });
+    }
   };
 
   const closeModal = () => {
@@ -386,6 +412,20 @@ const AdminManagement = () => {
     }
   };
 
+  const handleRoleSubmit = async () => {
+    try {
+      await adminApi.patchUserRoles(modalState.data._id, {
+        role: roleForm.role,
+        operationalRole: roleForm.operationalRole
+      });
+      setBanner({ type: 'success', message: 'User roles updated' });
+      await refreshUsers();
+      closeModal();
+    } catch (error) {
+      setBanner({ type: 'error', message: error.message || 'Failed to update roles' });
+    }
+  };
+
   const handleToggleCompany = (company) => {
     if (company.active === false) {
       return handleConfirm(
@@ -483,13 +523,9 @@ const AdminManagement = () => {
   );
 
   const renderStatusPill = (active) => (
-    <span
-      className={`px-2 py-1 rounded-full text-xs font-medium ${
-        active ? 'bg-emerald-400/15 text-emerald-300' : 'bg-red-500/15 text-red-300'
-      }`}
-    >
+    <Badge variant={active ? 'green' : 'red'} size="sm">
       {active ? 'Active' : 'Inactive'}
-    </span>
+    </Badge>
   );
 
   return (
@@ -498,15 +534,12 @@ const AdminManagement = () => {
 
       <div className="px-6 pt-6">
         {banner && (
-          <div
-            className={`mb-6 rounded-xl border px-4 py-3 text-sm ${
-              banner.type === 'error'
-                ? 'border-red-500/40 bg-red-500/10 text-red-200'
-                : 'border-emerald-400/40 bg-emerald-400/10 text-emerald-200'
-            }`}
-          >
-            {banner.message}
-          </div>
+          <AlertBanner
+            message={banner.message}
+            tone={banner.type === 'error' ? 'error' : 'success'}
+            onDismiss={() => setBanner(null)}
+            className="mb-6"
+          />
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 max-w-7xl mx-auto">
@@ -574,31 +607,18 @@ const AdminManagement = () => {
                 <h1 className="text-3xl font-bold text-gold">Admin Management</h1>
                 <p className="text-gold/60">Manage hierarchy and users with full audit coverage.</p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant={activeTab === 'companies' ? 'primary' : 'outline'}
-                  onClick={() => setActiveTab('companies')}
-                >
-                  Companies
-                </Button>
-                <Button
-                  variant={activeTab === 'teams' ? 'primary' : 'outline'}
-                  onClick={() => setActiveTab('teams')}
-                >
-                  Teams
-                </Button>
-                <Button
-                  variant={activeTab === 'squads' ? 'primary' : 'outline'}
-                  onClick={() => setActiveTab('squads')}
-                >
-                  Squads
-                </Button>
-                <Button
-                  variant={activeTab === 'users' ? 'primary' : 'outline'}
-                  onClick={() => setActiveTab('users')}
-                >
-                  Users
-                </Button>
+              <div className="flex overflow-x-auto gap-2 pb-1 scrollbar-thin">
+                {['companies', 'teams', 'squads', 'users'].map((tab) => (
+                  <Button
+                    key={tab}
+                    variant={activeTab === tab ? 'primary' : 'outline'}
+                    size="sm"
+                    onClick={() => setActiveTab(tab)}
+                    className="shrink-0 min-h-[44px] capitalize"
+                  >
+                    {tab}
+                  </Button>
+                ))}
               </div>
             </div>
 
@@ -623,257 +643,125 @@ const AdminManagement = () => {
 
             {activeTab === 'companies' && (
               <Card glass>
-                {hierarchyLoading ? (
-                  <div className="space-y-3">
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <div key={i} className="loading-skeleton h-12 rounded-lg" />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-gold/20 text-left text-sm text-gold/70">
-                          <th className="py-3 px-4">Company</th>
-                          <th className="py-3 px-4">Unit</th>
-                          <th className="py-3 px-4">Commander</th>
-                          <th className="py-3 px-4">Status</th>
-                          <th className="py-3 px-4">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredCompanies.length === 0 && (
-                          <tr>
-                            <td colSpan="5" className="py-8 text-center text-gold/60">
-                              {searchTerm ? 'No matching companies' : 'No companies found'}
-                            </td>
-                          </tr>
-                        )}
-                        {filteredCompanies.map((company) => (
-                          <tr key={company._id} className="border-b border-gold/10">
-                            <td className="py-3 px-4 text-gold">{company.name}</td>
-                            <td className="py-3 px-4 text-gold/70">
-                              {hierarchyMap.units[company.parentId] || company.parentId || 'Unassigned'}
-                            </td>
-                            <td className="py-3 px-4 text-gold/70">
-                              {company.commanderId || 'Unassigned'}
-                            </td>
-                            <td className="py-3 px-4">{renderStatusPill(company.active !== false)}</td>
-                            <td className="py-3 px-4 space-x-2">
-                              <Button variant="outline" size="small" onClick={() => openModal('company', 'edit', company)}>
-                                Edit
-                              </Button>
-                              <Button variant="ghost" size="small" onClick={() => handleToggleCompany(company)}>
-                                {company.active === false ? 'Activate' : 'Deactivate'}
-                              </Button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                <Table
+                  loading={hierarchyLoading}
+                  data={filteredCompanies}
+                  pageSize={0}
+                  emptyMessage={searchTerm ? 'No matching companies' : 'No companies defined yet'}
+                  columns={[
+                    { key: 'name', label: 'Company', sortable: true, render: (v) => <span className="text-gold font-medium">{v}</span> },
+                    { key: 'parentId', label: 'Unit', render: (v) => <span className="text-gold/70">{hierarchyMap.units[v] || v || 'Unassigned'}</span> },
+                    { key: 'commanderId', label: 'Commander', render: (v) => <span className="text-gold/70">{v || 'Unassigned'}</span> },
+                    { key: 'active', label: 'Status', render: (_, row) => renderStatusPill(row.active !== false) },
+                    { key: '_id', label: 'Actions', render: (_, company) => (
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => openModal('company', 'edit', company)}>Edit</Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleToggleCompany(company)}>
+                          {company.active === false ? 'Activate' : 'Deactivate'}
+                        </Button>
+                      </div>
+                    )}
+                  ]}
+                />
               </Card>
             )}
 
             {activeTab === 'teams' && (
               <Card glass>
-                {hierarchyLoading ? (
-                  <div className="space-y-3">
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <div key={i} className="loading-skeleton h-12 rounded-lg" />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-gold/20 text-left text-sm text-gold/70">
-                          <th className="py-3 px-4">Team</th>
-                          <th className="py-3 px-4">Company</th>
-                          <th className="py-3 px-4">Commander</th>
-                          <th className="py-3 px-4">Status</th>
-                          <th className="py-3 px-4">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredTeams.length === 0 && (
-                          <tr>
-                            <td colSpan="5" className="py-8 text-center text-gold/60">
-                              {searchTerm ? 'No matching teams' : 'No teams found'}
-                            </td>
-                          </tr>
-                        )}
-                        {filteredTeams.map((team) => (
-                          <tr key={team._id} className="border-b border-gold/10">
-                            <td className="py-3 px-4 text-gold">{team.name}</td>
-                            <td className="py-3 px-4 text-gold/70">
-                              {hierarchyMap.companies[team.parentId] || team.parentId || 'Unassigned'}
-                            </td>
-                            <td className="py-3 px-4 text-gold/70">
-                              {team.commanderId || 'Unassigned'}
-                            </td>
-                            <td className="py-3 px-4">{renderStatusPill(team.active !== false)}</td>
-                            <td className="py-3 px-4 space-x-2">
-                              <Button variant="outline" size="small" onClick={() => openModal('team', 'edit', team)}>
-                                Edit
-                              </Button>
-                              <Button variant="ghost" size="small" onClick={() => handleToggleTeam(team)}>
-                                {team.active === false ? 'Activate' : 'Deactivate'}
-                              </Button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                <Table
+                  loading={hierarchyLoading}
+                  data={filteredTeams}
+                  pageSize={0}
+                  emptyMessage={searchTerm ? 'No matching teams' : 'No teams defined yet'}
+                  columns={[
+                    { key: 'name', label: 'Team', sortable: true, render: (v) => <span className="text-gold font-medium">{v}</span> },
+                    { key: 'parentId', label: 'Company', render: (v) => <span className="text-gold/70">{hierarchyMap.companies[v] || v || 'Unassigned'}</span> },
+                    { key: 'commanderId', label: 'Commander', render: (v) => <span className="text-gold/70">{v || 'Unassigned'}</span> },
+                    { key: 'active', label: 'Status', render: (_, row) => renderStatusPill(row.active !== false) },
+                    { key: '_id', label: 'Actions', render: (_, team) => (
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => openModal('team', 'edit', team)}>Edit</Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleToggleTeam(team)}>
+                          {team.active === false ? 'Activate' : 'Deactivate'}
+                        </Button>
+                      </div>
+                    )}
+                  ]}
+                />
               </Card>
             )}
 
             {activeTab === 'squads' && (
               <Card glass>
-                {hierarchyLoading ? (
-                  <div className="space-y-3">
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <div key={i} className="loading-skeleton h-12 rounded-lg" />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-gold/20 text-left text-sm text-gold/70">
-                          <th className="py-3 px-4">Squad</th>
-                          <th className="py-3 px-4">Team</th>
-                          <th className="py-3 px-4">Commander</th>
-                          <th className="py-3 px-4">Status</th>
-                          <th className="py-3 px-4">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredSquads.length === 0 && (
-                          <tr>
-                            <td colSpan="5" className="py-8 text-center text-gold/60">
-                              {searchTerm ? 'No matching squads' : 'No squads found'}
-                            </td>
-                          </tr>
-                        )}
-                        {filteredSquads.map((squad) => (
-                          <tr key={squad._id} className="border-b border-gold/10">
-                            <td className="py-3 px-4 text-gold">{squad.name}</td>
-                            <td className="py-3 px-4 text-gold/70">
-                              {hierarchyMap.teams[squad.parentId] || squad.parentId || 'Unassigned'}
-                            </td>
-                            <td className="py-3 px-4 text-gold/70">
-                              {squad.commanderId || 'Unassigned'}
-                            </td>
-                            <td className="py-3 px-4">{renderStatusPill(squad.active !== false)}</td>
-                            <td className="py-3 px-4 space-x-2">
-                              <Button variant="outline" size="small" onClick={() => openModal('squad', 'edit', squad)}>
-                                Edit
-                              </Button>
-                              <Button variant="ghost" size="small" onClick={() => handleToggleSquad(squad)}>
-                                {squad.active === false ? 'Activate' : 'Deactivate'}
-                              </Button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                <Table
+                  loading={hierarchyLoading}
+                  data={filteredSquads}
+                  pageSize={0}
+                  emptyMessage={searchTerm ? 'No matching squads' : 'No squads defined yet'}
+                  columns={[
+                    { key: 'name', label: 'Squad', sortable: true, render: (v) => <span className="text-gold font-medium">{v}</span> },
+                    { key: 'parentId', label: 'Team', render: (v) => <span className="text-gold/70">{hierarchyMap.teams[v] || v || 'Unassigned'}</span> },
+                    { key: 'commanderId', label: 'Commander', render: (v) => <span className="text-gold/70">{v || 'Unassigned'}</span> },
+                    { key: 'active', label: 'Status', render: (_, row) => renderStatusPill(row.active !== false) },
+                    { key: '_id', label: 'Actions', render: (_, squad) => (
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => openModal('squad', 'edit', squad)}>Edit</Button>
+                        <Button variant="ghost" size="sm" onClick={() => handleToggleSquad(squad)}>
+                          {squad.active === false ? 'Activate' : 'Deactivate'}
+                        </Button>
+                      </div>
+                    )}
+                  ]}
+                />
               </Card>
             )}
 
             {activeTab === 'users' && (
               <Card glass>
-                {usersLoading ? (
-                  <div className="space-y-3">
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <div key={i} className="loading-skeleton h-12 rounded-lg" />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-gold/20 text-left text-sm text-gold/70">
-                          <th className="py-3 px-4">User</th>
-                          <th className="py-3 px-4">Role</th>
-                          <th className="py-3 px-4">Hierarchy</th>
-                          <th className="py-3 px-4">Status</th>
-                          <th className="py-3 px-4">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredUsers.length === 0 && (
-                          <tr>
-                            <td colSpan="5" className="py-8 text-center text-gold/60">
-                              {searchTerm ? 'No matching users' : 'No users found'}
-                            </td>
-                          </tr>
+                <Table
+                  loading={usersLoading}
+                  data={filteredUsers}
+                  pageSize={0}
+                  emptyMessage={searchTerm ? 'No matching users' : 'No users found'}
+                  columns={[
+                    { key: 'name', label: 'User', sortable: true, render: (_, user) => (
+                      <div className="space-y-0.5">
+                        <div className="font-medium text-gold">{user.name}</div>
+                        <div className="text-xs text-gold/50">{user.email}</div>
+                      </div>
+                    )},
+                    { key: 'operationalRole', label: 'Role', render: (v, row) => (
+                      <Badge variant="gold" size="sm">{v || row.role}</Badge>
+                    )},
+                    { key: 'unitId', label: 'Hierarchy', render: (_, user) => (
+                      <span className="text-xs text-gold/60">
+                        {hierarchyMap.units[user.unitId] || '?'} / {hierarchyMap.companies[user.companyId] || '?'} / {hierarchyMap.teams[user.teamId] || '?'} / {hierarchyMap.squads[user.squadId] || '?'}
+                      </span>
+                    )},
+                    { key: 'active', label: 'Status', render: (_, row) => renderStatusPill(row.active !== false) },
+                    { key: '_id', label: 'Actions', render: (_, user) => (
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => openModal('user', 'edit', user)}>Edit</Button>
+                        {!['HQ', 'UNIT_COMMANDER'].includes(user.operationalRole) && (
+                          <Button variant="outline" size="sm" onClick={() => openModal('userRoles', 'edit', user)}>Roles</Button>
                         )}
-                        {filteredUsers.map((user) => (
-                          <tr key={user._id} className="border-b border-gold/10">
-                            <td className="py-3 px-4 text-gold">
-                              <div className="space-y-1">
-                                <div className="font-medium">{user.name}</div>
-                                <div className="text-xs text-gold/60">{user.email}</div>
-                              </div>
-                            </td>
-                            <td className="py-3 px-4 text-gold/70">
-                              {user.operationalRole || user.role}
-                            </td>
-                            <td className="py-3 px-4 text-xs text-gold/60">
-                              {hierarchyMap.units[user.unitId] || 'Unit'} /
-                              {` ${hierarchyMap.companies[user.companyId] || 'Company'} /`}
-                              {` ${hierarchyMap.teams[user.teamId] || 'Team'} /`}
-                              {` ${hierarchyMap.squads[user.squadId] || 'Squad'}`}
-                            </td>
-                            <td className="py-3 px-4">{renderStatusPill(user.active !== false)}</td>
-                            <td className="py-3 px-4 space-x-2">
-                              <Button variant="outline" size="small" onClick={() => openModal('user', 'edit', user)}>
-                                Edit
-                              </Button>
-                              <Button variant="ghost" size="small" onClick={() => handleToggleUser(user)}>
-                                {user.active === false ? 'Activate' : 'Deactivate'}
-                              </Button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                        <Button variant="ghost" size="sm" onClick={() => handleToggleUser(user)}>
+                          {user.active === false ? 'Activate' : 'Deactivate'}
+                        </Button>
+                      </div>
+                    )}
+                  ]}
+                />
 
                 {pagination.pages > 1 && (
-                  <div className="flex items-center justify-between mt-6 pt-6 border-t border-gold/20">
-                    <div className="text-gold/60 text-sm">
-                      Showing {((pagination.page - 1) * pagination.limit) + 1} to{' '}
-                      {Math.min(pagination.page * pagination.limit, pagination.total)} of{' '}
-                      {pagination.total} users
-                    </div>
-                    <div className="flex space-x-2">
-                      <Button
-                        variant="outline"
-                        size="small"
-                        onClick={() => setPagination((prev) => ({ ...prev, page: prev.page - 1 }))}
-                        disabled={pagination.page === 1}
-                      >
-                        Previous
-                      </Button>
-                      <span className="flex items-center px-3 text-gold">
-                        {pagination.page} / {pagination.pages}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="small"
-                        onClick={() => setPagination((prev) => ({ ...prev, page: prev.page + 1 }))}
-                        disabled={pagination.page === pagination.pages}
-                      >
-                        Next
-                      </Button>
+                  <div className="flex items-center justify-between mt-6 pt-4 border-t border-gold/20">
+                    <span className="text-gold/50 text-sm">
+                      {((pagination.page - 1) * pagination.limit) + 1}–{Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={() => setPagination((prev) => ({ ...prev, page: prev.page - 1 }))} disabled={pagination.page === 1}>Previous</Button>
+                      <span className="text-gold text-sm">{pagination.page} / {pagination.pages}</span>
+                      <Button variant="outline" size="sm" onClick={() => setPagination((prev) => ({ ...prev, page: prev.page + 1 }))} disabled={pagination.page === pagination.pages}>Next</Button>
                     </div>
                   </div>
                 )}
@@ -1171,6 +1059,56 @@ const AdminManagement = () => {
             <Button onClick={handleUserSubmit}>
               {modalState.mode === 'create' ? 'Create' : 'Save'}
             </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={modalState.type === 'userRoles'}
+        onClose={closeModal}
+        title="Edit User Roles"
+      >
+        <div className="space-y-4">
+          <div className="p-3 rounded-lg bg-white/5 border border-gold/20 space-y-1">
+            <div className="text-sm font-medium text-gold">{modalState.data?.name}</div>
+            <div className="text-xs text-gold/50">{modalState.data?.email}</div>
+            <div className="flex gap-2 mt-1">
+              <Badge variant="gold" size="sm">{modalState.data?.operationalRole}</Badge>
+              {modalState.data?.role === 'admin' && <Badge variant="blue" size="sm">admin</Badge>}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-gold">Operational Role</label>
+            <select
+              className="dark-input w-full"
+              value={roleForm.operationalRole}
+              onChange={(e) => setRoleForm((prev) => ({ ...prev, operationalRole: e.target.value }))}
+            >
+              {allowableOperationalRoles.map((r) => (
+                <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>
+              ))}
+            </select>
+          </div>
+
+          {currentUser?.operationalRole === 'HQ' && (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gold">System Role</label>
+              <select
+                className="dark-input w-full"
+                value={roleForm.role}
+                onChange={(e) => setRoleForm((prev) => ({ ...prev, role: e.target.value }))}
+              >
+                <option value="user">user</option>
+                <option value="admin">admin</option>
+              </select>
+              <p className="text-xs text-gold/40">Granting admin enables access to this management panel.</p>
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={closeModal}>Cancel</Button>
+            <Button onClick={handleRoleSubmit}>Save Roles</Button>
           </div>
         </div>
       </Modal>

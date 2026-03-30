@@ -192,7 +192,7 @@ const Register = () => {
             </svg>
           </div>
           <h1 className="text-3xl font-bold text-gold mb-2">Create Account</h1>
-          <p className="text-gold/60">Join GeoMap to share your location</p>
+          <p className="text-gold/60">Join Fox-Eye to share your location</p>
         </div>
 
         <Card glass goldBorder>

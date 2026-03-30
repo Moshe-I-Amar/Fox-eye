@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../../services/authApi';
 import api from '../../services/api';
 import Button from '../ui/Button';
+import { HEALTH_POLL_INTERVAL_MS } from '../../config/constants';
 
 const Navbar = ({ realtimeStatus = 'offline' }) => {
   const navigate = useNavigate();
@@ -40,7 +41,7 @@ const Navbar = ({ realtimeStatus = 'offline' }) => {
     };
 
     fetchHealth();
-    const timer = setInterval(fetchHealth, 30000);
+    const timer = setInterval(fetchHealth, HEALTH_POLL_INTERVAL_MS);
 
     return () => {
       isActive = false;
@@ -63,7 +64,7 @@ const Navbar = ({ realtimeStatus = 'offline' }) => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           </div>
-          <span className="text-xl font-bold text-gold">GeoMap</span>
+          <span className="text-xl font-bold text-gold">Fox-Eye</span>
         </Link>
 
         <div className="flex items-center space-x-4">

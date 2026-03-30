@@ -34,6 +34,7 @@ export const adminApi = {
   createUser: (payload) => unwrap(api.post('/api/admin/users', payload)),
   updateUser: (id, payload) => unwrap(api.put(`/api/admin/users/${id}`, payload)),
   setUserActive: (id, active) => unwrap(api.patch(`/api/admin/users/${id}/active`, { active })),
+  patchUserRoles: (id, payload) => unwrap(api.patch(`/api/admin/users/${id}/roles`, payload)),
 
   getUsers: (page = 1, limit = 10) =>
     unwrap(api.get(`/api/users?page=${page}&limit=${limit}`))
