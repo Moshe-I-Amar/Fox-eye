@@ -1,4 +1,13 @@
 const mongoose = require('mongoose');
+const { ServerApiVersion } = require('mongodb');
+
+const ATLAS_OPTIONS = {
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: false,
+    deprecationErrors: true,
+  },
+};
 
 const parseEnvInt = (value, fallback) => {
   const parsed = Number.parseInt(value, 10);
@@ -7,14 +16,16 @@ const parseEnvInt = (value, fallback) => {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const connectWithRetry = async ({ maxRetries, delayMs }) => {
+const isAtlasUri = (uri) => uri.startsWith('mongodb+srv://');
+
+const connectWithRetry = async ({ maxRetries, delayMs, mongooseOptions }) => {
   let attempt = 0;
   let currentDelay = delayMs;
 
   while (true) {
     try {
       attempt += 1;
-      const conn = await mongoose.connect(process.env.MONGO_URI);
+      const conn = await mongoose.connect(process.env.MONGO_URI, mongooseOptions);
       console.log(`MongoDB Connected: ${conn.connection.host}`);
       return conn;
     } catch (error) {
@@ -37,6 +48,8 @@ const connectDB = async (options = {}) => {
     throw new Error('MONGO_URI is not set');
   }
 
+  const mongooseOptions = isAtlasUri(process.env.MONGO_URI) ? ATLAS_OPTIONS : {};
+
   const isProd = process.env.NODE_ENV === 'production';
   const retryEnabled = options.retryEnabled ?? isProd;
   const maxRetries =
@@ -53,12 +66,12 @@ const connectDB = async (options = {}) => {
       : 2000);
 
   if (!retryEnabled) {
-    const conn = await mongoose.connect(process.env.MONGO_URI);
+    const conn = await mongoose.connect(process.env.MONGO_URI, mongooseOptions);
     console.log(`MongoDB Connected: ${conn.connection.host}`);
     return conn;
   }
 
-  return connectWithRetry({ maxRetries, delayMs });
+  return connectWithRetry({ maxRetries, delayMs, mongooseOptions });
 };
 
 const disconnectDB = async () => {
