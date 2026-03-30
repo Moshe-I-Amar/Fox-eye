@@ -14,7 +14,8 @@ const {
   deleteSquad,
   createUser,
   updateUser,
-  setUserActive
+  setUserActive,
+  patchUserRoles
 } = require('../controllers/adminController');
 
 router.use(auth, requireRole(['admin']));
@@ -36,5 +37,6 @@ router.delete('/squads/:id', requireOperationalRole(['HQ', 'UNIT_COMMANDER', 'CO
 router.post('/users', requireOperationalRole(['HQ', 'UNIT_COMMANDER', 'COMPANY_COMMANDER']), createUser);
 router.put('/users/:id', requireOperationalRole(['HQ', 'UNIT_COMMANDER', 'COMPANY_COMMANDER']), updateUser);
 router.patch('/users/:id/active', requireOperationalRole(['HQ', 'UNIT_COMMANDER', 'COMPANY_COMMANDER']), setUserActive);
+router.patch('/users/:id/roles', requireOperationalRole(['HQ', 'UNIT_COMMANDER']), patchUserRoles);
 
 module.exports = router;

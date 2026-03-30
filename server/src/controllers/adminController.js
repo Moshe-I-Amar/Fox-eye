@@ -18,7 +18,8 @@ const {
   isCompanyCommander,
   assertCompanyAccess,
   assertCompanyAccessFromTeam,
-  assertCompanyAccessFromSquad
+  assertCompanyAccessFromSquad,
+  assertRoleEditAuthority
 } = require('../middleware/authorize');
 
 const sanitizeUserSnapshot = (snapshot) => {
@@ -647,6 +648,57 @@ const setUserActive = asyncHandler(async (req, res) => {
   });
 });
 
+const patchUserRoles = asyncHandler(async (req, res) => {
+  const target = await User.findById(req.params.id);
+  if (!target) {
+    throw new AppError('NOT_FOUND', 'User not found', 404);
+  }
+
+  const { role, operationalRole } = req.body;
+
+  if (role === undefined && operationalRole === undefined) {
+    throw new AppError('VALIDATION_ERROR', 'At least one of role or operationalRole is required', 400);
+  }
+
+  if (role !== undefined && !['admin', 'user'].includes(role)) {
+    throw new AppError('VALIDATION_ERROR', 'role must be admin or user', 400);
+  }
+
+  if (operationalRole !== undefined && !OPERATIONAL_ROLES.includes(operationalRole)) {
+    throw new AppError('VALIDATION_ERROR', 'Invalid operationalRole', 400);
+  }
+
+  assertRoleEditAuthority(req.user, target, operationalRole, role);
+
+  const before = sanitizeUserSnapshot(target.toObject());
+  const updates = {};
+  if (role !== undefined) updates.role = role;
+  if (operationalRole !== undefined) updates.operationalRole = operationalRole;
+
+  const updatedUser = await withTransaction(async (session) => {
+    const doc = await User.findByIdAndUpdate(
+      target._id,
+      updates,
+      { new: true, runValidators: true, session }
+    );
+    await logAdminAction({
+      action: 'user.roles.update',
+      actorUserId: req.user.id,
+      targetType: 'user',
+      targetId: target._id,
+      before,
+      after: sanitizeUserSnapshot(doc.toObject()),
+      session
+    });
+    return doc;
+  });
+
+  res.json({
+    success: true,
+    data: { user: updatedUser }
+  });
+});
+
 module.exports = {
   listAdminHierarchyTree,
   createCompany,
@@ -660,5 +712,6 @@ module.exports = {
   deleteSquad,
   createUser,
   updateUser,
-  setUserActive
+  setUserActive,
+  patchUserRoles
 };
