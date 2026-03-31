@@ -1,5 +1,6 @@
 const { body, validationResult } = require('express-validator');
 const { AppError } = require('./errors');
+const { OPERATIONAL_ROLES } = require('./roles');
 
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
@@ -21,22 +22,42 @@ const validateRegister = [
   body('password')
     .isLength({ min: 6 })
     .withMessage('Password must be at least 6 characters'),
+  body('inviteToken')
+    .notEmpty()
+    .withMessage('A valid invite token is required'),
+  handleValidationErrors
+];
+
+const validateCreateInvite = [
+  body('assignedOperationalRole')
+    .notEmpty()
+    .withMessage('assignedOperationalRole is required')
+    .isIn(OPERATIONAL_ROLES)
+    .withMessage(`assignedOperationalRole must be one of: ${OPERATIONAL_ROLES.join(', ')}`),
+  body('assignedRole')
+    .optional()
+    .isIn(['admin', 'user'])
+    .withMessage('assignedRole must be admin or user'),
   body('unitId')
-    .optional()
+    .notEmpty()
     .isMongoId()
-    .withMessage('Unit ID must be a valid Mongo ID'),
+    .withMessage('unitId is required and must be a valid Mongo ID'),
   body('companyId')
-    .optional()
+    .notEmpty()
     .isMongoId()
-    .withMessage('Company ID must be a valid Mongo ID'),
+    .withMessage('companyId is required and must be a valid Mongo ID'),
   body('teamId')
-    .optional()
+    .notEmpty()
     .isMongoId()
-    .withMessage('Team ID must be a valid Mongo ID'),
+    .withMessage('teamId is required and must be a valid Mongo ID'),
   body('squadId')
-    .optional()
+    .notEmpty()
     .isMongoId()
-    .withMessage('Squad ID must be a valid Mongo ID'),
+    .withMessage('squadId is required and must be a valid Mongo ID'),
+  body('expiresInDays')
+    .optional()
+    .isInt({ min: 1, max: 30 })
+    .withMessage('expiresInDays must be an integer between 1 and 30'),
   handleValidationErrors
 ];
 
@@ -198,6 +219,23 @@ const validateAOActive = [
   handleValidationErrors
 ];
 
+const { FIELD_EVENT_TYPES } = require('../models/FieldEvent');
+
+const validateFieldEventCreate = [
+  body('eventType')
+    .notEmpty()
+    .withMessage('eventType is required')
+    .isIn(FIELD_EVENT_TYPES)
+    .withMessage(`eventType must be one of: ${FIELD_EVENT_TYPES.join(', ')}`),
+  body('coordinates')
+    .isArray({ min: 2, max: 2 })
+    .withMessage('coordinates must be [longitude, latitude]'),
+  body('coordinates.*')
+    .isFloat()
+    .withMessage('coordinates must be numbers'),
+  handleValidationErrors
+];
+
 module.exports = {
   validateRegister,
   validateLogin,
@@ -205,5 +243,7 @@ module.exports = {
   validateAOCreate,
   validateAOUpdate,
   validateAOActive,
+  validateCreateInvite,
+  validateFieldEventCreate,
   handleValidationErrors
 };

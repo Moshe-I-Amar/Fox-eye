@@ -153,26 +153,53 @@ VITE_API_URL
 - `seed:demo` — Seed demo hierarchy data
 - `test` — Run server tests
 
+## Registration & Access Control
+
+Fox-Eye uses an **invite-only registration system**. Open self-registration is disabled — all new accounts must be created via a commander-issued invite link.
+
+### How it works
+
+1. **Commander generates an invite** — via Admin Management → Invites tab → "Generate Invite". The invite is bound to a specific squad assignment, operational role, and expiry (1–30 days, default 7).
+2. **Link is shared with the recruit** — the generated URL looks like `/register?token=<hex>`.
+3. **Recruit registers** — the register page validates the token and pre-fills/locks the hierarchy and role. The recruit only supplies name, email, and password.
+4. **Token is consumed atomically** — user creation and token consumption happen in a single MongoDB transaction. The link cannot be reused.
+
+### Invite rules
+- Only `HQ`, `UNIT_COMMANDER`, and `COMPANY_COMMANDER` admins can generate invites.
+- Commanders cannot assign a role at or above their own rank.
+- `COMPANY_COMMANDER` can only invite into their own company.
+- Only `HQ` can generate admin-role invites.
+- Invites can be revoked at any time before use.
+
+### Register page states
+| State | Behavior |
+|---|---|
+| No `?token` in URL | Locked screen — "Registration requires an invite link from your commander." |
+| Token invalid / expired / used | Error screen — no form shown |
+| Token valid | Form with pre-filled read-only assignment and role; recruit fills name/email/password only |
+
 ## Domain Model
 
 | Model | Key Fields |
 |-------|-----------|
-| `User` | email, role (admin/user), operationalRole (5-tier), location (GeoJSON Point + 2dsphere index), unit/company/team/squadId, online, lastSeen |
+| `User` | email, role (admin/user), operationalRole (5-tier), status (active/pending/rejected), location (GeoJSON Point + 2dsphere index), unit/company/team/squadId, online, lastSeen |
+| `InviteToken` | token (hex, unique), createdBy, expiresAt, usedAt, usedBy, assignedRole, assignedOperationalRole, full hierarchy IDs, active |
 | `AO` | GeoJSON Polygon, companyId, active, style (color, pattern, icon) |
 | `ViolationEvent` | type (APPROACHING_BOUNDARY \| BREACH \| SUSTAINED_BREACH), userId, aoId, coordinates, occurredAt |
 | `Company/Unit/Team/Squad` | Hierarchical org entities with parent refs |
 | `AdminAuditLog` | action, actorId, subject, companyId, timestamp |
 
 **Operational role hierarchy (descending authority):**
-`HQ` > `UNIT_COMMANDER` > `COMPANY_COMMANDER` > `TEAM_LEADER` > `SQUAD_COMMANDER`
+`HQ` > `UNIT_COMMANDER` > `COMPANY_COMMANDER` > `TEAM_COMMANDER` > `SQUAD_COMMANDER`
 
 ## API Endpoints
 
 ```
 GET  /api/health
-POST /api/auth/register
+POST /api/auth/register          # requires inviteToken in body
 POST /api/auth/login
 GET  /api/auth/me
+GET  /api/auth/invite/:token     # validate invite token (public)
 
 GET  /api/users
 GET  /api/users/near
@@ -194,6 +221,10 @@ POST /api/admin/squads
 POST /api/admin/users
 PUT  /api/admin/users/:id
 DELETE /api/admin/...
+
+POST   /api/admin/invites        # generate invite (HQ/UNIT_COMMANDER/COMPANY_COMMANDER)
+GET    /api/admin/invites        # list invites scoped to actor
+DELETE /api/admin/invites/:id    # revoke invite
 ```
 
 ## Security Notes

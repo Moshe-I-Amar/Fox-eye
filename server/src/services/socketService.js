@@ -268,6 +268,69 @@ class SocketService {
     }
   }
 
+  // ---- Field Event Broadcasting ----
+
+  broadcastFieldEvent(event) {
+    const payload = {
+      event: event.toObject ? event.toObject() : event,
+      timestamp: new Date().toISOString()
+    };
+    this._emitToHierarchyScope(event, 'field:event:new', payload);
+  }
+
+  broadcastFieldEventAck(event) {
+    const payload = {
+      event: event.toObject ? event.toObject() : event,
+      timestamp: new Date().toISOString()
+    };
+    this._emitToHierarchyScope(event, 'field:event:acknowledged', payload);
+  }
+
+  broadcastFieldEventResolve(event) {
+    const payload = {
+      event: event.toObject ? event.toObject() : event,
+      timestamp: new Date().toISOString()
+    };
+    this._emitToHierarchyScope(event, 'field:event:resolved', payload);
+  }
+
+  _emitToHierarchyScope(event, socketEvent, payload) {
+    const eventSquadId   = event.squadId   ? String(event.squadId)   : null;
+    const eventTeamId    = event.teamId    ? String(event.teamId)     : null;
+    const eventCompanyId = event.companyId ? String(event.companyId)  : null;
+    const eventUnitId    = event.unitId    ? String(event.unitId)     : null;
+    const senderIdStr    = event.senderId  ? String(event.senderId)   : null;
+
+    for (const [socketId, recipientInfo] of this.presenceService.getUserSocketEntries()) {
+      if (!recipientInfo) continue;
+
+      if (recipientInfo.role === 'admin') {
+        this.io.to(socketId).emit(socketEvent, payload);
+        continue;
+      }
+
+      if (senderIdStr && recipientInfo.userId === senderIdStr) {
+        this.io.to(socketId).emit(socketEvent, payload);
+        continue;
+      }
+
+      if (recipientInfo.userScope && recipientInfo.userScope.all) {
+        this.io.to(socketId).emit(socketEvent, payload);
+        continue;
+      }
+
+      const scope = recipientInfo.userScope || {};
+      const squadMatch   = eventSquadId   && (scope.squads    || []).map(String).includes(eventSquadId);
+      const teamMatch    = eventTeamId    && (scope.teams     || []).map(String).includes(eventTeamId);
+      const companyMatch = eventCompanyId && (scope.companies || []).map(String).includes(eventCompanyId);
+      const unitMatch    = eventUnitId    && (scope.units     || []).map(String).includes(eventUnitId);
+
+      if (squadMatch || teamMatch || companyMatch || unitMatch) {
+        this.io.to(socketId).emit(socketEvent, payload);
+      }
+    }
+  }
+
   // Utility methods
   emitToUser(userId, event, data) {
     return this.presenceService.emitToUser(userId, event, data);

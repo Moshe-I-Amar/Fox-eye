@@ -37,5 +37,9 @@ export const adminApi = {
   patchUserRoles: (id, payload) => unwrap(api.patch(`/api/admin/users/${id}/roles`, payload)),
 
   getUsers: (page = 1, limit = 10) =>
-    unwrap(api.get(`/api/users?page=${page}&limit=${limit}`))
+    unwrap(api.get(`/api/users?page=${page}&limit=${limit}`)),
+
+  createInvite: (payload) => unwrap(api.post('/api/admin/invites', payload)),
+  listInvites: (status) => unwrap(api.get(`/api/admin/invites${status ? `?status=${status}` : ''}`)),
+  revokeInvite: (id) => unwrap(api.delete(`/api/admin/invites/${id}`))
 };

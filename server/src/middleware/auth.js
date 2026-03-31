@@ -18,6 +18,14 @@ const auth = asyncHandler(async (req, res, next) => {
     throw new AppError('AUTH_INVALID_TOKEN', 'Invalid token. User not found.', 401);
   }
 
+  if (user.status === 'pending') {
+    throw new AppError('AUTH_PENDING', 'Your account is awaiting approval.', 403);
+  }
+
+  if (user.status === 'rejected') {
+    throw new AppError('AUTH_REJECTED', 'Your account registration was rejected.', 403);
+  }
+
   if (user.active === false) {
     throw new AppError('AUTH_INACTIVE', 'User account is inactive.', 403);
   }

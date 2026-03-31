@@ -41,5 +41,10 @@ export const authService = {
   setAuthData: (token, user) => {
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(user));
+  },
+
+  validateInvite: async (token) => {
+    const response = await api.get(`/api/auth/invite/${token}`);
+    return response.data.data;
   }
 };

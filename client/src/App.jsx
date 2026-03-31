@@ -1,49 +1,19 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import ProtectedRoute from './components/layout/ProtectedRoute';
-import AdminRoute from './components/layout/AdminRoute';
-import AdminManagementRoute from './components/layout/AdminManagementRoute';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import RouteGuard from './components/layout/RouteGuard';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Admin from './pages/Admin';
 import AdminManagement from './pages/AdminManagement';
-import { authService } from './services/authApi';
+import MobileFieldView from './pages/mobile/MobileFieldView';
 
-function App() {
-  const [authReady, setAuthReady] = useState(false);
+const ADMIN_MANAGEMENT_ROLES = ['HQ', 'UNIT_COMMANDER', 'COMPANY_COMMANDER'];
 
-  useEffect(() => {
-    let isActive = true;
-    const token = localStorage.getItem('token');
-
-    if (!token) {
-      setAuthReady(true);
-      return () => {
-        isActive = false;
-      };
-    }
-
-    const bootstrapAuth = async () => {
-      try {
-        const response = await authService.getMe();
-        if (!isActive) return;
-        authService.setAuthData(token, response.user);
-      } catch (error) {
-        authService.logout();
-      } finally {
-        if (isActive) {
-          setAuthReady(true);
-        }
-      }
-    };
-
-    bootstrapAuth();
-
-    return () => {
-      isActive = false;
-    };
-  }, []);
+// Inner component — can safely call useAuth() because it is rendered inside AuthProvider
+const AppRoutes = () => {
+  const { authReady } = useAuth();
 
   if (!authReady) {
     return (
@@ -54,33 +24,47 @@ function App() {
   }
 
   return (
-    <div className="App">
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        
-        <Route path="/dashboard" element={
-          <ProtectedRoute>
-            <Dashboard />
-          </ProtectedRoute>
-        } />
-        
-        <Route path="/admin" element={
-          <AdminRoute>
-            <Admin />
-          </AdminRoute>
-        } />
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
 
-        <Route path="/admin/management" element={
-          <AdminManagementRoute>
-            <AdminManagement />
-          </AdminManagementRoute>
-        } />
-        
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
-    </div>
+      <Route path="/dashboard" element={
+        <RouteGuard>
+          <Dashboard />
+        </RouteGuard>
+      } />
+
+      <Route path="/admin" element={
+        <RouteGuard requireRole="admin">
+          <Admin />
+        </RouteGuard>
+      } />
+
+      <Route path="/admin/management" element={
+        <RouteGuard requireRole="admin" requireOperationalRoles={ADMIN_MANAGEMENT_ROLES}>
+          <AdminManagement />
+        </RouteGuard>
+      } />
+
+      <Route path="/mobile" element={
+        <RouteGuard requireRole="user">
+          <MobileFieldView />
+        </RouteGuard>
+      } />
+
+      <Route path="/" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
+  );
+};
+
+function App() {
+  return (
+    <AuthProvider>
+      <div className="App">
+        <AppRoutes />
+      </div>
+    </AuthProvider>
   );
 }
 

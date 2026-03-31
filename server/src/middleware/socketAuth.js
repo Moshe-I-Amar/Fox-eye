@@ -21,7 +21,8 @@ const authenticateSocket = async (socket, next) => {
     socket.userRole = user.role;
     socket.userInfo = user;
     socket.userScope = await resolveUserScope(user);
-    
+    socket.sessionType = socket.handshake.query?.sessionType === 'MOBILE' ? 'MOBILE' : 'WEB';
+
     next();
   } catch (error) {
     if (error.name === 'JsonWebTokenError') {

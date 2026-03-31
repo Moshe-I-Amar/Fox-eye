@@ -53,61 +53,6 @@ const resolveHierarchyPath = async ({ unitId, companyId, teamId, squadId }) => {
 };
 
 /**
- * Resolves a hierarchy path for user registration.
- * IDs are optional — falls back to the first active node at each level.
- * Used by the auth register flow where users may not supply explicit IDs.
- */
-const resolveHierarchyForRegistration = async ({ unitId, companyId, teamId, squadId }) => {
-  const unit = unitId
-    ? await Unit.findOne({ _id: unitId, active: true }).lean()
-    : await Unit.findOne({ active: true }).sort({ createdAt: 1 }).lean();
-
-  if (!unit) {
-    throw new AppError('HIERARCHY_UNIT_NOT_FOUND', 'Unit not found for registration', 400);
-  }
-
-  const company = companyId
-    ? await Company.findOne({ _id: companyId, active: true }).lean()
-    : await Company.findOne({ parentId: unit._id, active: true }).sort({ createdAt: 1 }).lean();
-
-  if (!company) {
-    throw new AppError('HIERARCHY_COMPANY_NOT_FOUND', 'Company not found for registration', 400);
-  }
-  if (String(company.parentId) !== String(unit._id)) {
-    throw new AppError('HIERARCHY_COMPANY_MISMATCH', 'Company does not belong to the selected unit', 400);
-  }
-
-  const team = teamId
-    ? await Team.findOne({ _id: teamId, active: true }).lean()
-    : await Team.findOne({ parentId: company._id, active: true }).sort({ createdAt: 1 }).lean();
-
-  if (!team) {
-    throw new AppError('HIERARCHY_TEAM_NOT_FOUND', 'Team not found for registration', 400);
-  }
-  if (String(team.parentId) !== String(company._id)) {
-    throw new AppError('HIERARCHY_TEAM_MISMATCH', 'Team does not belong to the selected company', 400);
-  }
-
-  const squad = squadId
-    ? await Squad.findOne({ _id: squadId, active: true }).lean()
-    : await Squad.findOne({ parentId: team._id, active: true }).sort({ createdAt: 1 }).lean();
-
-  if (!squad) {
-    throw new AppError('HIERARCHY_SQUAD_NOT_FOUND', 'Squad not found for registration', 400);
-  }
-  if (String(squad.parentId) !== String(team._id)) {
-    throw new AppError('HIERARCHY_SQUAD_MISMATCH', 'Squad does not belong to the selected team', 400);
-  }
-
-  return {
-    unitId: unit._id,
-    companyId: company._id,
-    teamId: team._id,
-    squadId: squad._id
-  };
-};
-
-/**
  * Ensures a hierarchy node has no active children or users before deactivation.
  * Throws if any active descendants exist.
  */
@@ -166,7 +111,6 @@ const getHierarchyTree = async () => {
 
 module.exports = {
   resolveHierarchyPath,
-  resolveHierarchyForRegistration,
   ensureNoActiveChildren,
   getHierarchyTree
 };

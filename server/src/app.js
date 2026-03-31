@@ -17,6 +17,7 @@ const aoRoutes = require('./routes/aoRoutes');
 const hierarchyRoutes = require('./routes/hierarchyRoutes');
 const violationRoutes = require('./routes/violationRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const eventRoutes = require('./routes/eventRoutes');
 
 const PORT = process.env.PORT || 5000;
 
@@ -46,11 +47,17 @@ const createApp = () => {
     const start = Date.now();
     res.on('finish', () => {
       const durationMs = Date.now() - start;
+      // Scrub invite token from logged URL — token is a secret material
+      const rawPath = req.originalUrl;
+      const safePath = rawPath.replace(
+        /(\/api\/auth\/invite\/)([^?#]+)/,
+        '$1[redacted]'
+      );
       const log = {
         level: 'info',
         message: 'request',
         method: req.method,
-        path: req.originalUrl,
+        path: safePath,
         status: res.statusCode,
         durationMs,
         requestId: req.id || req.header('x-request-id') || null
@@ -86,6 +93,19 @@ const createApp = () => {
   });
   app.use('/api/auth/login', authLimiter);
   app.use('/api/auth/register', authLimiter);
+
+  const inviteLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    message: {
+      success: false,
+      error: {
+        code: 'RATE_LIMITED',
+        message: 'Too many invite validation attempts, please try again later.'
+      }
+    }
+  });
+  app.use('/api/auth/invite/', inviteLimiter);
 
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
@@ -123,6 +143,7 @@ const createApp = () => {
   app.use('/api/users', userRoutes);
   app.use('/api/aos', aoRoutes);
   app.use('/api/violations', violationRoutes);
+  app.use('/api/events', eventRoutes);
   app.use('/api/admin', adminRoutes);
 
   app.use('*', (req, res, next) => {

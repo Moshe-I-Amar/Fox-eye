@@ -13,7 +13,7 @@ class SocketService {
     this.viewportCooldownMs = 250;
   }
 
-  connect(token) {
+  connect(token, { sessionType = 'WEB' } = {}) {
     if (this.socket && this.socket.connected) {
       return Promise.resolve(this.socket);
     }
@@ -27,6 +27,7 @@ class SocketService {
           auth: {
             token: token
           },
+          query: { sessionType },
           transports: ['websocket', 'polling'],
           timeout: 20000,
           reconnection: true,
@@ -133,6 +134,19 @@ class SocketService {
 
         this.socket.on('ao:deleted', (data) => {
           this.emit('ao:deleted', data);
+        });
+
+        // Field Events
+        this.socket.on('field:event:new', (data) => {
+          this.emit('field:event:new', data);
+        });
+
+        this.socket.on('field:event:acknowledged', (data) => {
+          this.emit('field:event:acknowledged', data);
+        });
+
+        this.socket.on('field:event:resolved', (data) => {
+          this.emit('field:event:resolved', data);
         });
 
       } catch (error) {

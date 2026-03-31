@@ -1,8 +1,9 @@
 const User = require('../models/User');
+const InviteToken = require('../models/InviteToken');
 const jwt = require('jsonwebtoken');
 const asyncHandler = require('../utils/asyncHandler');
 const { AppError } = require('../utils/errors');
-const { resolveHierarchyForRegistration } = require('../services/hierarchyService');
+const { withTransaction } = require('../utils/withTransaction');
 
 const generateToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -11,31 +12,52 @@ const generateToken = (id) => {
 };
 
 const register = asyncHandler(async (req, res) => {
-  const { name, email, password, unitId, companyId, teamId, squadId } = req.body;
+  const { name, email, password, inviteToken } = req.body;
+
+  if (!inviteToken) {
+    throw new AppError('INVITE_REQUIRED', 'A valid invite token is required to register.', 403);
+  }
+
+  const invite = await InviteToken.findOne({
+    token: inviteToken,
+    active: true,
+    usedAt: null,
+    expiresAt: { $gt: new Date() }
+  });
+
+  if (!invite) {
+    throw new AppError('INVITE_INVALID', 'Invite link is invalid or has expired.', 410);
+  }
 
   const existingUser = await User.findOne({ email });
   if (existingUser) {
     throw new AppError('USER_EXISTS', 'User already exists with this email', 400);
   }
 
-  const resolvedHierarchy = await resolveHierarchyForRegistration({
-    unitId,
-    companyId,
-    teamId,
-    squadId
-  });
+  const user = await withTransaction(async (session) => {
+    const [doc] = await User.create(
+      [{
+        name,
+        email,
+        password,
+        role: invite.assignedRole || 'user',
+        operationalRole: invite.assignedOperationalRole,
+        unitId: invite.unitId,
+        companyId: invite.companyId,
+        teamId: invite.teamId,
+        squadId: invite.squadId,
+        status: 'active',
+        active: true
+      }],
+      { session }
+    );
 
-  const user = new User({
-    name,
-    email,
-    password,
-    unitId: resolvedHierarchy.unitId,
-    companyId: resolvedHierarchy.companyId,
-    teamId: resolvedHierarchy.teamId,
-    squadId: resolvedHierarchy.squadId
-  });
+    invite.usedAt = new Date();
+    invite.usedBy = doc._id;
+    await invite.save({ session });
 
-  await user.save();
+    return doc;
+  });
 
   const token = generateToken(user._id);
 
@@ -52,6 +74,14 @@ const login = asyncHandler(async (req, res) => {
   const user = await User.findOne({ email });
   if (!user) {
     throw new AppError('AUTH_INVALID_CREDENTIALS', 'Invalid email or password', 401);
+  }
+
+  if (user.status === 'pending') {
+    throw new AppError('AUTH_PENDING', 'Your account is awaiting approval.', 403);
+  }
+
+  if (user.status === 'rejected') {
+    throw new AppError('AUTH_REJECTED', 'Your account registration was rejected.', 403);
   }
 
   if (user.active === false) {
