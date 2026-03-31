@@ -27,6 +27,7 @@ const GPS_STYLES = {
  *   onTabChange      {fn}       — (key: string) => void
  *   connectionStatus {string}   — 'connected' | 'reconnecting' | 'disconnected'
  *   gpsStatus        {string}   — 'locked' | 'searching' | 'unavailable'
+ *   wakeLockStatus   {string}   — 'active' | 'released' | 'unsupported'
  *   onBack           {fn}       — optional; renders back arrow to /dashboard
  */
 const MobileLayout = ({
@@ -35,6 +36,7 @@ const MobileLayout = ({
   onTabChange,
   connectionStatus = 'disconnected',
   gpsStatus = 'searching',
+  wakeLockStatus = 'unsupported',
   onBack
 }) => {
   const connStyle = CONNECTION_STYLES[connectionStatus] ?? CONNECTION_STYLES.disconnected;
@@ -64,6 +66,19 @@ const MobileLayout = ({
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Wake lock indicator — only shown when supported */}
+          {wakeLockStatus !== 'unsupported' && (
+            <span
+              title={wakeLockStatus === 'active' ? 'Screen awake' : 'Screen lock inactive'}
+              aria-label={wakeLockStatus === 'active' ? 'Screen awake' : 'Screen lock inactive'}
+              className={`text-xs leading-none transition-colors ${
+                wakeLockStatus === 'active' ? 'text-gold/60' : 'text-gold/20'
+              }`}
+            >
+              {wakeLockStatus === 'active' ? '■' : '□'}
+            </span>
+          )}
+
           {/* GPS status */}
           <span
             title={gpsStyle.title}

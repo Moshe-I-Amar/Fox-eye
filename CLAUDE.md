@@ -181,11 +181,12 @@ Socket connect now accepts optional session type: `socketService.connect(token, 
 
 ### Stack
 - React 18 with hooks only (no class components)
-- Vite 5 — use `import.meta.env.VITE_*` (never `process.env`)
+- Vite 5 + **vite-plugin-pwa** (Workbox) — PWA service worker, app manifest, tile caching
 - Tailwind CSS 3.x with custom dark theme
 - Leaflet 1.9 + react-leaflet 4.x + leaflet-draw
 - Axios with JWT interceptors via `services/api.js`
 - Socket.IO client via `services/socketService.js`
+- Use `import.meta.env.VITE_*` (never `process.env`)
 
 ### Auth context — always use this, never read localStorage directly
 ```jsx
@@ -247,9 +248,10 @@ components/ui/Modal.jsx    — overlay modal
 | `src/services/eventApi.js` | `createEvent()`, `getEvents()`, `acknowledgeEvent()`, `resolveEvent()` |
 | `src/services/socketService.js` | Socket.IO client singleton; `connect(token, { sessionType })` |
 | `src/hooks/useFieldEvents.js` | Fetch + live socket subscription for field events; returns `{ events, loading, error, refetch }` |
-| `src/pages/mobile/MobileFieldView.jsx` | Mobile page — GPS watcher, socket MOBILE session, status tracking; route `/mobile` |
-| `src/pages/mobile/MobileLayout.jsx` | Mobile shell — `100dvh`, bottom nav (mobile) / sidebar (md+), safe-area padding; props: `connectionStatus`, `gpsStatus`, `onBack` |
-| `src/pages/mobile/PanicPanel.jsx` | Three tactile panic buttons (INJURED/AMBUSH/LINK_UP); props: `userCoordinates`, `disabled` |
+| `src/hooks/useOfflineQueue.js` | Persist + flush field events queued while offline; returns `{ queue, enqueue, flush }` — backed by `localStorage` |
+| `src/pages/mobile/MobileFieldView.jsx` | Mobile page — GPS watcher, socket MOBILE session, Wake Lock, network-status detection, offline queue flush; route `/mobile` |
+| `src/pages/mobile/MobileLayout.jsx` | Mobile shell — `100dvh`, bottom nav (mobile) / sidebar (md+), safe-area padding; props: `connectionStatus`, `gpsStatus`, `wakeLockStatus`, `onBack` |
+| `src/pages/mobile/PanicPanel.jsx` | Three tactile panic buttons (INJURED/AMBUSH/LINK_UP); haptic on press/send; props: `userCoordinates`, `disabled`, `onQueueEvent`, `queuedCount` |
 | `src/pages/mobile/MobileFieldMap.jsx` | Hierarchy-scoped Leaflet map; props: `userCoordinates`, `initialZoom`, `showZoomControl`; includes center-on-me FAB |
 | `src/pages/mobile/MobileEventFeed.jsx` | Live field events list with refresh + active count; prop: `limit` |
 
@@ -279,6 +281,8 @@ components/ui/Modal.jsx    — overlay modal
 | Mobile map invisible | `MobileFieldMap` parent must be `h-full` inside a flex-1 container — `MobileLayout` content div handles this |
 | Panic button disabled unexpectedly | `connectionStatus === 'disconnected'` in `MobileFieldView` — check socket connect/auth |
 | Field event POST 422 velocity | Two rapid events with large coordinate delta — `validateAntiSpoof` in `fieldEventService.js` |
+| Panic send silently queued instead of sent | `navigator.onLine === false` or no `err.status` → `useOfflineQueue.enqueue()` was called; check `queuedCount` badge on PanicPanel |
+| Wake lock not acquired | Browser requires a user gesture before `wakeLock.request()` on some versions; also unavailable in non-secure (non-HTTPS) contexts |
 
 ---
 

@@ -41,8 +41,10 @@ const FEEDBACK_DISMISS_MS = 5000;
  * Props:
  *   userCoordinates  {[lng, lat] | null}  — current GPS position
  *   disabled         {boolean}            — disable all buttons (e.g. while offline)
+ *   onQueueEvent     {fn}                 — called with payload when offline; queues for retry
+ *   queuedCount      {number}             — number of events pending in offline queue
  */
-const PanicPanel = ({ userCoordinates, disabled = false }) => {
+const PanicPanel = ({ userCoordinates, disabled = false, onQueueEvent, queuedCount = 0 }) => {
   const [pending,  setPending]  = useState(null);
   const [sending,  setSending]  = useState(false);
   const [feedback, setFeedback] = useState(null);
@@ -56,6 +58,7 @@ const PanicPanel = ({ userCoordinates, disabled = false }) => {
 
   const handlePress = useCallback((btn) => {
     if (disabled) return;
+    navigator.vibrate?.([100, 50, 100]);
     setFeedback(null);
     setPending(btn);
   }, [disabled]);
@@ -63,15 +66,23 @@ const PanicPanel = ({ userCoordinates, disabled = false }) => {
   const handleConfirm = async () => {
     if (!pending) return;
     setSending(true);
+    const payload = {
+      eventType:   pending.type,
+      coordinates: userCoordinates,
+      timestamp:   new Date().toISOString()
+    };
     try {
-      await eventApi.createEvent({
-        eventType:   pending.type,
-        coordinates: userCoordinates,
-        timestamp:   new Date().toISOString()
-      });
+      await eventApi.createEvent(payload);
+      navigator.vibrate?.(200);
       setFeedback({ type: 'success', message: `${pending.label} signal sent to command chain.` });
     } catch (err) {
-      setFeedback({ type: 'error', message: err.message || 'Failed to send signal. Try again.' });
+      const isNetworkError = !navigator.onLine || !err.status;
+      if (isNetworkError && onQueueEvent) {
+        onQueueEvent(payload);
+        setFeedback({ type: 'queued', message: `${pending.label} queued — will send when online.` });
+      } else {
+        setFeedback({ type: 'error', message: err.message || 'Failed to send signal. Try again.' });
+      }
     } finally {
       setSending(false);
       setPending(null);
@@ -92,9 +103,17 @@ const PanicPanel = ({ userCoordinates, disabled = false }) => {
         </div>
       )}
 
-      <p className="text-center text-[10px] text-gold/40 tracking-widest uppercase shrink-0">
-        Tap to send field signal
-      </p>
+      <div className="flex items-center justify-center gap-3 shrink-0">
+        <p className="text-center text-[10px] text-gold/40 tracking-widest uppercase">
+          Tap to send field signal
+        </p>
+        {queuedCount > 0 && (
+          <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40
+            text-[10px] text-amber-300 font-semibold tracking-wider whitespace-nowrap">
+            {queuedCount} queued
+          </span>
+        )}
+      </div>
 
       {/* Panic buttons — flex-1 so they fill remaining vertical space equally */}
       {BUTTONS.map((btn) => (
@@ -124,7 +143,9 @@ const PanicPanel = ({ userCoordinates, disabled = false }) => {
           className={`shrink-0 text-center text-sm py-3 px-4 rounded-lg border transition-all animate-slide-up
             ${feedback.type === 'success'
               ? 'bg-emerald-400/15 text-emerald-300 border-emerald-400/30'
-              : 'bg-red-500/15 text-red-300 border-red-500/30'}`}
+              : feedback.type === 'queued'
+                ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                : 'bg-red-500/15 text-red-300 border-red-500/30'}`}
         >
           {feedback.message}
         </div>

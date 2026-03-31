@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import socketService from '../../services/socketService';
+import useOfflineQueue   from '../../hooks/useOfflineQueue';
 import MobileLayout    from './MobileLayout';
 import PanicPanel      from './PanicPanel';
 import MobileFieldMap  from './MobileFieldMap';
@@ -9,8 +10,8 @@ import MobileEventFeed from './MobileEventFeed';
 /**
  * MobileFieldView — root page for the field mobile interface.
  *
- * Manages: socket connection, GPS watching, connection/GPS status.
- * Passes status down to MobileLayout (header indicators) and PanicPanel (GPS warning).
+ * Manages: socket connection, GPS watching, wake lock, network status,
+ * offline event queue, connection/GPS status indicators.
  *
  * Route: /mobile  (requires role=user via RouteGuard in App.jsx)
  */
@@ -21,6 +22,55 @@ const MobileFieldView = () => {
   const [userCoords,        setUserCoords]         = useState(null);
   const [connectionStatus,  setConnectionStatus]  = useState('disconnected');
   const [gpsStatus,         setGpsStatus]         = useState('searching');
+  const [wakeLockStatus,    setWakeLockStatus]    = useState('unsupported');
+
+  const wakeLockRef = useRef(null);
+  const { queue, enqueue, flush } = useOfflineQueue();
+
+  // ── Wake Lock ──────────────────────────────────────────────────────
+  const acquireWakeLock = useCallback(async () => {
+    if (!('wakeLock' in navigator)) return;
+    try {
+      wakeLockRef.current = await navigator.wakeLock.request('screen');
+      setWakeLockStatus('active');
+      wakeLockRef.current.addEventListener('release', () => setWakeLockStatus('released'));
+    } catch (_) {
+      setWakeLockStatus('released');
+    }
+  }, []);
+
+  useEffect(() => {
+    acquireWakeLock();
+
+    // Re-acquire when tab becomes visible again (wake lock releases on hide)
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') acquireWakeLock();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      wakeLockRef.current?.release().catch(() => {});
+    };
+  }, [acquireWakeLock]);
+
+  // ── Network status ─────────────────────────────────────────────────
+  useEffect(() => {
+    const handleOffline = () => setConnectionStatus('disconnected');
+    const handleOnline  = () => {
+      // Socket reconnection handles setConnectionStatus('connected');
+      // flush any queued events now that we're back online
+      flush();
+    };
+
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online',  handleOnline);
+
+    return () => {
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online',  handleOnline);
+    };
+  }, [flush]);
 
   // ── Socket connection ──────────────────────────────────────────────
   useEffect(() => {
@@ -34,7 +84,10 @@ const MobileFieldView = () => {
       .then(() => setConnectionStatus('connected'))
       .catch(() => setConnectionStatus('disconnected'));
 
-    const onConnect       = () => setConnectionStatus('connected');
+    const onConnect = () => {
+      setConnectionStatus('connected');
+      flush(); // flush offline queue on reconnect
+    };
     const onDisconnect    = () => setConnectionStatus('disconnected');
     const onReconnecting  = () => setConnectionStatus('reconnecting');
     const onAuthError     = () => navigate('/login?reason=session-expired');
@@ -53,7 +106,7 @@ const MobileFieldView = () => {
       socketService.off('auth_error',       onAuthError);
       socketService.off('reconnect_failed', onReconnFailed);
     };
-  }, [navigate]);
+  }, [navigate, flush]);
 
   // ── GPS watcher ────────────────────────────────────────────────────
   useEffect(() => {
@@ -93,12 +146,15 @@ const MobileFieldView = () => {
       onTabChange={setActiveTab}
       connectionStatus={connectionStatus}
       gpsStatus={gpsStatus}
+      wakeLockStatus={wakeLockStatus}
       onBack={handleBack}
     >
       {activeTab === 'panic' && (
         <PanicPanel
           userCoordinates={userCoords}
           disabled={isPanelDisabled}
+          onQueueEvent={enqueue}
+          queuedCount={queue.length}
         />
       )}
       {activeTab === 'map' && (
