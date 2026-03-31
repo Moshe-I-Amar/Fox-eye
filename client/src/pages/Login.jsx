@@ -1,29 +1,75 @@
 import React, { useMemo, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { authService } from '../services/authApi';
+import { useAuth } from '../context/AuthContext';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Card from '../components/ui/Card';
 
+// Maps a ?reason= code to { message, tone }
+// tone: 'info' (gold) | 'warning' (amber) | 'error' (red)
+const REASON_NOTICES = {
+  'session-expired': {
+    message: 'Your session expired. Please sign in again.',
+    tone: 'info'
+  },
+  'AUTH_PENDING': {
+    message: 'Your account is awaiting commander approval. Contact your commanding officer.',
+    tone: 'warning'
+  },
+  'AUTH_REJECTED': {
+    message: 'Your account registration was rejected. Contact your commanding officer for assistance.',
+    tone: 'error'
+  },
+  'AUTH_INACTIVE': {
+    message: 'Your account has been deactivated. Contact your commanding officer.',
+    tone: 'error'
+  }
+};
+
+// Maps a server error code from a login attempt to { message, tone }
+const SUBMIT_ERROR_NOTICES = {
+  'AUTH_PENDING': {
+    message: 'Your account is awaiting commander approval. You cannot sign in until it is approved.',
+    tone: 'warning'
+  },
+  'AUTH_REJECTED': {
+    message: 'Your account registration was rejected. Please contact your commanding officer.',
+    tone: 'error'
+  },
+  'AUTH_INACTIVE': {
+    message: 'Your account has been deactivated. Please contact your commanding officer.',
+    tone: 'error'
+  }
+};
+
+const Notice = ({ message, tone }) => {
+  const styles = {
+    info: 'bg-gold/15 border-gold/40 text-gold/90',
+    warning: 'bg-amber-500/15 border-amber-500/40 text-amber-300',
+    error: 'bg-red-500/20 border-red-500/50 text-red-300'
+  };
+  return (
+    <div className={`border rounded-lg p-3 text-sm animate-slide-up ${styles[tone] || styles.error}`}>
+      {message}
+    </div>
+  );
+};
+
 const Login = () => {
-  const [formData, setFormData] = useState({
-    email: '',
-    password: ''
-  });
-  const [errors, setErrors] = useState({});
+  const [formData, setFormData] = useState({ email: '', password: '' });
+  const [submitNotice, setSubmitNotice] = useState(null); // { message, tone }
   const [loading, setLoading] = useState(false);
+  const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const authNotice = useMemo(() => {
+
+  const urlNotice = useMemo(() => {
     const fromState = location.state?.message;
-    if (fromState) {
-      return fromState;
-    }
+    if (fromState) return { message: fromState, tone: 'info' };
+
     const reason = new URLSearchParams(location.search).get('reason');
-    if (reason === 'session-expired') {
-      return 'Your session expired. Please sign in again.';
-    }
-    return '';
+    return REASON_NOTICES[reason] || null;
   }, [location.search, location.state?.message]);
 
   const from = location.state?.from?.pathname || '/dashboard';
@@ -31,23 +77,27 @@ const Login = () => {
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
-    if (errors[name]) {
-      setErrors(prev => ({ ...prev, [name]: '' }));
-    }
+    if (submitNotice) setSubmitNotice(null);
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setErrors({});
+    setSubmitNotice(null);
 
     try {
       const response = await authService.login(formData);
-      authService.setAuthData(response.token, response.user);
+      login(response.token, response.user);
       navigate(from, { replace: true });
     } catch (error) {
-      const message = error.response?.data?.error?.message || 'Login failed';
-      setErrors({ form: message });
+      const code = error.response?.data?.error?.code;
+      const message = error.response?.data?.error?.message || 'Login failed. Please try again.';
+
+      if (SUBMIT_ERROR_NOTICES[code]) {
+        setSubmitNotice(SUBMIT_ERROR_NOTICES[code]);
+      } else {
+        setSubmitNotice({ message, tone: 'error' });
+      }
     } finally {
       setLoading(false);
     }
@@ -69,16 +119,8 @@ const Login = () => {
 
         <Card glass goldBorder>
           <form onSubmit={handleSubmit} className="space-y-6">
-            {authNotice && (
-              <div className="bg-gold/15 border border-gold/40 rounded-lg p-3 text-gold/90 text-sm animate-slide-up">
-                {authNotice}
-              </div>
-            )}
-            {errors.form && (
-              <div className="bg-red-500/20 border border-red-500/50 rounded-lg p-3 text-red-300 text-sm animate-slide-up">
-                {errors.form}
-              </div>
-            )}
+            {urlNotice && <Notice {...urlNotice} />}
+            {submitNotice && <Notice {...submitNotice} />}
 
             <Input
               type="email"
@@ -87,7 +129,7 @@ const Login = () => {
               value={formData.email}
               onChange={handleChange}
               placeholder="Enter your email"
-              error={errors.email}
+              disabled={loading}
               required
             />
 
@@ -98,15 +140,11 @@ const Login = () => {
               value={formData.password}
               onChange={handleChange}
               placeholder="Enter your password"
-              error={errors.password}
+              disabled={loading}
               required
             />
 
-            <Button
-              type="submit"
-              disabled={loading}
-              className="w-full"
-            >
+            <Button type="submit" disabled={loading} className="w-full">
               {loading ? 'Signing in...' : 'Sign In'}
             </Button>
           </form>

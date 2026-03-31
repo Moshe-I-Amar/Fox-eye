@@ -83,6 +83,11 @@ const userSchema = new mongoose.Schema({
   active: {
     type: Boolean,
     default: true
+  },
+  status: {
+    type: String,
+    enum: ['active', 'pending', 'rejected'],
+    default: 'active'
   }
 }, {
   timestamps: true

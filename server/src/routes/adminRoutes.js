@@ -17,6 +17,12 @@ const {
   setUserActive,
   patchUserRoles
 } = require('../controllers/adminController');
+const {
+  createInvite,
+  listInvites,
+  revokeInvite
+} = require('../controllers/inviteController');
+const { validateCreateInvite } = require('../utils/validators');
 
 router.use(auth, requireRole(['admin']));
 
@@ -38,5 +44,9 @@ router.post('/users', requireOperationalRole(['HQ', 'UNIT_COMMANDER', 'COMPANY_C
 router.put('/users/:id', requireOperationalRole(['HQ', 'UNIT_COMMANDER', 'COMPANY_COMMANDER']), updateUser);
 router.patch('/users/:id/active', requireOperationalRole(['HQ', 'UNIT_COMMANDER', 'COMPANY_COMMANDER']), setUserActive);
 router.patch('/users/:id/roles', requireOperationalRole(['HQ', 'UNIT_COMMANDER']), patchUserRoles);
+
+router.post('/invites', requireOperationalRole(['HQ', 'UNIT_COMMANDER', 'COMPANY_COMMANDER']), validateCreateInvite, createInvite);
+router.get('/invites', requireOperationalRole(['HQ', 'UNIT_COMMANDER', 'COMPANY_COMMANDER']), listInvites);
+router.delete('/invites/:id', requireOperationalRole(['HQ', 'UNIT_COMMANDER', 'COMPANY_COMMANDER']), revokeInvite);
 
 module.exports = router;

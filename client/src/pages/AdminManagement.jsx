@@ -80,6 +80,19 @@ const AdminManagement = () => {
   const [squadForm, setSquadForm] = useState(emptySquadForm);
   const [userForm, setUserForm] = useState(emptyUserForm);
   const [roleForm, setRoleForm] = useState({ role: 'user', operationalRole: 'SQUAD_COMMANDER' });
+  const [invites, setInvites] = useState([]);
+  const [invitesLoading, setInvitesLoading] = useState(false);
+  const [inviteForm, setInviteForm] = useState({
+    assignedOperationalRole: '',
+    assignedRole: 'user',
+    unitId: '',
+    companyId: '',
+    teamId: '',
+    squadId: '',
+    expiresInDays: 7
+  });
+  const [generatedLink, setGeneratedLink] = useState(null);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const currentUser = useMemo(() => authService.getCurrentUser(), []);
 
@@ -215,6 +228,13 @@ const AdminManagement = () => {
     return () => clearTimeout(timer);
   }, [banner]);
 
+  useEffect(() => {
+    if (activeTab === 'invites') {
+      loadInvites();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
   const refreshHierarchy = async () => {
     const data = await adminApi.getHierarchyTree();
     setHierarchy({
@@ -232,6 +252,37 @@ const AdminManagement = () => {
       ...prev,
       ...data.pagination
     }));
+  };
+
+  const loadInvites = async () => {
+    try {
+      setInvitesLoading(true);
+      const data = await adminApi.listInvites();
+      setInvites(data.invites || []);
+    } catch (error) {
+      setBanner({ type: 'error', message: error.message || 'Failed to load invites' });
+    } finally {
+      setInvitesLoading(false);
+    }
+  };
+
+  const handleInviteSubmit = async () => {
+    try {
+      const data = await adminApi.createInvite(inviteForm);
+      const link = `${window.location.origin}/register?token=${data.invite.token}`;
+      setGeneratedLink(link);
+      setCopiedLink(false);
+      await loadInvites();
+    } catch (error) {
+      setBanner({ type: 'error', message: error.message || 'Failed to create invite' });
+    }
+  };
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(generatedLink).then(() => {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    });
   };
 
   const openModal = (type, mode, data = null) => {
@@ -277,6 +328,19 @@ const AdminManagement = () => {
         role: data?.role || 'user',
         operationalRole: data?.operationalRole || 'SQUAD_COMMANDER'
       });
+    }
+    if (type === 'invite') {
+      setInviteForm({
+        assignedOperationalRole: allowableOperationalRoles[0] || '',
+        assignedRole: 'user',
+        unitId: '',
+        companyId: '',
+        teamId: '',
+        squadId: '',
+        expiresInDays: 7
+      });
+      setGeneratedLink(null);
+      setCopiedLink(false);
     }
   };
 
@@ -608,7 +672,7 @@ const AdminManagement = () => {
                 <p className="text-gold/60">Manage hierarchy and users with full audit coverage.</p>
               </div>
               <div className="flex overflow-x-auto gap-2 pb-1 scrollbar-thin">
-                {['companies', 'teams', 'squads', 'users'].map((tab) => (
+                {['companies', 'teams', 'squads', 'users', 'invites'].map((tab) => (
                   <Button
                     key={tab}
                     variant={activeTab === tab ? 'primary' : 'outline'}
@@ -624,20 +688,31 @@ const AdminManagement = () => {
 
             <Card glass>
               <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                <Input
-                  placeholder={`Search ${activeTab}...`}
-                  value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
-                  className="bg-transparent"
-                />
-                <Button
-                  onClick={() => openModal(
-                    { companies: 'company', teams: 'team', squads: 'squad', users: 'user' }[activeTab],
-                    'create'
-                  )}
-                >
-                  Create
-                </Button>
+                {activeTab !== 'invites' && (
+                  <Input
+                    placeholder={`Search ${activeTab}...`}
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    className="bg-transparent"
+                  />
+                )}
+                {activeTab === 'invites' ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gold/60">Generate a one-time invite link for a new member</span>
+                    <Button onClick={() => openModal('invite', 'create')}>
+                      Generate Invite
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    onClick={() => openModal(
+                      { companies: 'company', teams: 'team', squads: 'squad', users: 'user' }[activeTab],
+                      'create'
+                    )}
+                  >
+                    Create
+                  </Button>
+                )}
               </div>
             </Card>
 
@@ -711,6 +786,67 @@ const AdminManagement = () => {
                         </Button>
                       </div>
                     )}
+                  ]}
+                />
+              </Card>
+            )}
+
+            {activeTab === 'invites' && (
+              <Card glass>
+                <Table
+                  loading={invitesLoading}
+                  data={invites}
+                  pageSize={0}
+                  emptyMessage="No invites generated yet"
+                  columns={[
+                    { key: 'assignedOperationalRole', label: 'Assigned Role', render: (v, row) => (
+                      <div className="space-y-1">
+                        <Badge variant="gold" size="sm">{v}</Badge>
+                        {row.assignedRole === 'admin' && <Badge variant="blue" size="sm">admin</Badge>}
+                      </div>
+                    )},
+                    { key: 'unitId', label: 'Assignment', render: (_, invite) => (
+                      <span className="text-xs text-gold/60">
+                        {hierarchyMap.units[invite.unitId] || '?'} / {hierarchyMap.companies[invite.companyId] || '?'} / {hierarchyMap.teams[invite.teamId] || '?'} / {hierarchyMap.squads[invite.squadId] || '?'}
+                      </span>
+                    )},
+                    { key: 'inviterName', label: 'Created By', render: (v, row) => (
+                      <span className="text-gold/70">{row.createdBy?.name || v || '—'}</span>
+                    )},
+                    { key: 'expiresAt', label: 'Expires', render: (v) => (
+                      <span className="text-xs text-gold/60">{new Date(v).toLocaleDateString()}</span>
+                    )},
+                    { key: '_id', label: 'Status', render: (_, invite) => {
+                      const now = new Date();
+                      if (invite.usedAt) return <Badge variant="green" size="sm">Used</Badge>;
+                      if (!invite.active || new Date(invite.expiresAt) <= now) return <Badge variant="red" size="sm">Expired</Badge>;
+                      return <Badge variant="gold" size="sm">Active</Badge>;
+                    }},
+                    { key: '_id', label: 'Actions', render: (id, invite) => {
+                      const now = new Date();
+                      const isActive = invite.active && !invite.usedAt && new Date(invite.expiresAt) > now;
+                      return (
+                        <div className="flex gap-2">
+                          {isActive && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleConfirm(
+                                'Revoke invite?',
+                                'This invite link will immediately stop working.',
+                                async () => {
+                                  await adminApi.revokeInvite(id);
+                                  await loadInvites();
+                                  setBanner({ type: 'success', message: 'Invite revoked' });
+                                }
+                              )}
+                            >
+                              Revoke
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    }}
                   ]}
                 />
               </Card>
@@ -1060,6 +1196,141 @@ const AdminManagement = () => {
               {modalState.mode === 'create' ? 'Create' : 'Save'}
             </Button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={modalState.type === 'invite'}
+        onClose={() => { closeModal(); setGeneratedLink(null); }}
+        title="Generate Invite Link"
+      >
+        <div className="space-y-4">
+          {generatedLink ? (
+            <>
+              <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30 text-sm text-green-300">
+                Invite link created. Share this link with the recruit — it expires in {inviteForm.expiresInDays} day{inviteForm.expiresInDays !== 1 ? 's' : ''} and is single-use.
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  readOnly
+                  value={generatedLink}
+                  className="dark-input w-full text-xs text-gold/80 select-all"
+                  onClick={(e) => e.target.select()}
+                />
+                <Button variant="outline" size="sm" onClick={handleCopyLink} className="shrink-0">
+                  {copiedLink ? 'Copied!' : 'Copy'}
+                </Button>
+              </div>
+              <div className="flex justify-end">
+                <Button variant="ghost" onClick={() => { closeModal(); setGeneratedLink(null); }}>Close</Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gold">Assigned Operational Role</label>
+                <select
+                  className="dark-input w-full"
+                  value={inviteForm.assignedOperationalRole}
+                  onChange={(e) => setInviteForm((prev) => ({ ...prev, assignedOperationalRole: e.target.value }))}
+                >
+                  <option value="">Select role</option>
+                  {allowableOperationalRoles.map((r) => (
+                    <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>
+                  ))}
+                </select>
+              </div>
+
+              {currentUser?.operationalRole === 'HQ' && (
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gold">System Role</label>
+                  <select
+                    className="dark-input w-full"
+                    value={inviteForm.assignedRole}
+                    onChange={(e) => setInviteForm((prev) => ({ ...prev, assignedRole: e.target.value }))}
+                  >
+                    <option value="user">user</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gold">Unit</label>
+                  <select
+                    className="dark-input w-full"
+                    value={inviteForm.unitId}
+                    onChange={(e) => setInviteForm((prev) => ({ ...prev, unitId: e.target.value, companyId: '', teamId: '', squadId: '' }))}
+                  >
+                    <option value="">Select unit</option>
+                    {activeUnits.map((u) => <option key={u._id} value={u._id}>{u.name}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gold">Company</label>
+                  <select
+                    className="dark-input w-full"
+                    value={inviteForm.companyId}
+                    onChange={(e) => setInviteForm((prev) => ({ ...prev, companyId: e.target.value, teamId: '', squadId: '' }))}
+                  >
+                    <option value="">Select company</option>
+                    {activeCompanies
+                      .filter((c) => !inviteForm.unitId || c.parentId === inviteForm.unitId)
+                      .map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gold">Team</label>
+                  <select
+                    className="dark-input w-full"
+                    value={inviteForm.teamId}
+                    onChange={(e) => setInviteForm((prev) => ({ ...prev, teamId: e.target.value, squadId: '' }))}
+                  >
+                    <option value="">Select team</option>
+                    {activeTeams
+                      .filter((t) => !inviteForm.companyId || t.parentId === inviteForm.companyId)
+                      .map((t) => <option key={t._id} value={t._id}>{t.name}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gold">Squad</label>
+                  <select
+                    className="dark-input w-full"
+                    value={inviteForm.squadId}
+                    onChange={(e) => setInviteForm((prev) => ({ ...prev, squadId: e.target.value }))}
+                  >
+                    <option value="">Select squad</option>
+                    {activeSquads
+                      .filter((s) => !inviteForm.teamId || s.parentId === inviteForm.teamId)
+                      .map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-gold">Expires in (days)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={30}
+                  className="dark-input w-full"
+                  value={inviteForm.expiresInDays}
+                  onChange={(e) => setInviteForm((prev) => ({ ...prev, expiresInDays: parseInt(e.target.value, 10) || 7 }))}
+                />
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <Button variant="ghost" onClick={closeModal}>Cancel</Button>
+                <Button
+                  onClick={handleInviteSubmit}
+                  disabled={!inviteForm.assignedOperationalRole || !inviteForm.unitId || !inviteForm.companyId || !inviteForm.teamId || !inviteForm.squadId}
+                >
+                  Generate Link
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </Modal>
 
