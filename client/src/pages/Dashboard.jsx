@@ -1490,11 +1490,11 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="h-screen overflow-hidden flex flex-col">
       <Navbar realtimeStatus={realtimeStatus} />
 
       {realtimeNotice && (
-        <div className="px-6 pt-4">
+        <div className="px-6 pt-4 shrink-0">
           <AlertBanner
             message={realtimeNotice}
             tone={realtimeNoticeTone === 'error' ? 'error' : 'warning'}
@@ -1504,7 +1504,7 @@ const Dashboard = () => {
       )}
       
       {/* Mobile sidebar toggle */}
-      <div className="lg:hidden flex items-center gap-2 px-4 pt-3">
+      <div className="lg:hidden shrink-0 flex items-center gap-2 px-4 pt-3">
         <button
           onClick={() => setSidebarOpen((o) => !o)}
           className="flex items-center gap-2 rounded-lg border border-gold/30 bg-gold/5 px-3 py-2 text-gold text-sm min-h-[44px] min-w-[44px]"
@@ -1517,7 +1517,7 @@ const Dashboard = () => {
         </button>
       </div>
 
-      <div className="flex flex-col lg:flex-row lg:h-[calc(100vh-80px)]">
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
         {/* Left Panel - User List */}
         <div className={`${sidebarOpen ? 'flex' : 'hidden'} lg:flex w-full lg:w-80 glass-card border-b lg:border-b-0 lg:border-r border-gold/20 p-6 overflow-hidden flex-col lg:h-full max-h-[60vh] lg:max-h-none`}>
           <div className="flex items-center justify-between mb-6">
@@ -1766,8 +1766,8 @@ const Dashboard = () => {
         </div>
 
         {/* Map */}
-        <div className="flex-1 p-4 lg:p-6 min-h-[50vh] lg:min-h-0">
-          <Card className="h-full min-h-[50vh] lg:min-h-0 p-0">
+        <div className="flex-1 min-h-0 p-4 lg:p-6">
+          <Card className="h-full p-0">
             <MapComponent
               center={mapCenter}
               users={users}

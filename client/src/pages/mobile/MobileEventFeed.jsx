@@ -40,7 +40,7 @@ const MobileEventFeed = ({ limit = 20 }) => {
   const activeCount = events.filter((e) => e.status === 'ACTIVE').length;
 
   return (
-    <div className="flex flex-col h-full animate-fade-in">
+    <div className="flex flex-col animate-fade-in">
 
       {/* Summary header */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-gold/10 shrink-0">
@@ -65,7 +65,7 @@ const MobileEventFeed = ({ limit = 20 }) => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
+      <div>
         {loading && events.length === 0 && (
           <div className="flex items-center justify-center h-32 text-gold/40 text-sm">
             Loading…

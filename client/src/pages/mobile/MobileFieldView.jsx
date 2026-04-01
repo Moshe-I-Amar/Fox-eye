@@ -13,12 +13,16 @@ import MobileEventFeed from './MobileEventFeed';
  * Manages: socket connection, GPS watching, wake lock, network status,
  * offline event queue, connection/GPS status indicators.
  *
+ * Layout: MobileFieldMap is always the full-screen base layer (passed as
+ * `mapSlot`). PanicPanel and MobileEventFeed render as bottom-sheet children
+ * that slide up over the map — identical to the Google Maps mobile pattern.
+ *
  * Route: /mobile  (requires role=user via RouteGuard in App.jsx)
  */
 const MobileFieldView = () => {
   const navigate = useNavigate();
 
-  const [activeTab,         setActiveTab]         = useState('panic');
+  const [activeTab,         setActiveTab]         = useState('map');
   const [userCoords,        setUserCoords]         = useState(null);
   const [connectionStatus,  setConnectionStatus]  = useState('disconnected');
   const [gpsStatus,         setGpsStatus]         = useState('searching');
@@ -41,13 +45,10 @@ const MobileFieldView = () => {
 
   useEffect(() => {
     acquireWakeLock();
-
-    // Re-acquire when tab becomes visible again (wake lock releases on hide)
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') acquireWakeLock();
     };
     document.addEventListener('visibilitychange', handleVisibility);
-
     return () => {
       document.removeEventListener('visibilitychange', handleVisibility);
       wakeLockRef.current?.release().catch(() => {});
@@ -57,15 +58,9 @@ const MobileFieldView = () => {
   // ── Network status ─────────────────────────────────────────────────
   useEffect(() => {
     const handleOffline = () => setConnectionStatus('disconnected');
-    const handleOnline  = () => {
-      // Socket reconnection handles setConnectionStatus('connected');
-      // flush any queued events now that we're back online
-      flush();
-    };
-
+    const handleOnline  = () => flush();
     window.addEventListener('offline', handleOffline);
     window.addEventListener('online',  handleOnline);
-
     return () => {
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('online',  handleOnline);
@@ -75,19 +70,13 @@ const MobileFieldView = () => {
   // ── Socket connection ──────────────────────────────────────────────
   useEffect(() => {
     const token = localStorage.getItem('token');
-    if (!token) {
-      navigate('/login');
-      return;
-    }
+    if (!token) { navigate('/login'); return; }
 
     socketService.connect(token, { sessionType: 'MOBILE' })
       .then(() => setConnectionStatus('connected'))
       .catch(() => setConnectionStatus('disconnected'));
 
-    const onConnect = () => {
-      setConnectionStatus('connected');
-      flush(); // flush offline queue on reconnect
-    };
+    const onConnect       = () => { setConnectionStatus('connected'); flush(); };
     const onDisconnect    = () => setConnectionStatus('disconnected');
     const onReconnecting  = () => setConnectionStatus('reconnecting');
     const onAuthError     = () => navigate('/login?reason=session-expired');
@@ -114,17 +103,13 @@ const MobileFieldView = () => {
       setGpsStatus('unavailable');
       return;
     }
-
     setGpsStatus('searching');
-
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const coords = [pos.coords.longitude, pos.coords.latitude];
         setUserCoords(coords);
         setGpsStatus('locked');
-        try {
-          socketService.updateLocation(coords);
-        } catch (_) {}
+        try { socketService.updateLocation(coords); } catch (_) {}
       },
       (err) => {
         console.warn('GPS error:', err.message);
@@ -132,16 +117,24 @@ const MobileFieldView = () => {
       },
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
     );
-
     return () => navigator.geolocation.clearWatch(watchId);
   }, []);
 
   const handleBack = useCallback(() => navigate('/dashboard'), [navigate]);
 
-  const isPanelDisabled = connectionStatus === 'disconnected';
+  // Panic buttons are never disabled by socket state — events go via REST API
+  // and the offline queue handles network failures gracefully.
+  const isPanelDisabled = false;
 
   return (
     <MobileLayout
+      mapSlot={
+        <MobileFieldMap
+          userCoordinates={userCoords}
+          showZoomControl={window.innerWidth >= 768}
+          gpsStatus={gpsStatus}
+        />
+      }
       activeTab={activeTab}
       onTabChange={setActiveTab}
       connectionStatus={connectionStatus}
@@ -155,12 +148,6 @@ const MobileFieldView = () => {
           disabled={isPanelDisabled}
           onQueueEvent={enqueue}
           queuedCount={queue.length}
-        />
-      )}
-      {activeTab === 'map' && (
-        <MobileFieldMap
-          userCoordinates={userCoords}
-          showZoomControl={window.innerWidth >= 768}
         />
       )}
       {activeTab === 'feed' && (

@@ -93,7 +93,7 @@ const PanicPanel = ({ userCoordinates, disabled = false, onQueueEvent, queuedCou
 
   return (
     // flex-col + flex-1 on buttons = equal-height buttons that fill the screen
-    <div className="flex flex-col h-full p-4 gap-3 animate-fade-in">
+    <div className="flex flex-col p-4 gap-3 animate-fade-in">
 
       {/* GPS warning */}
       {noGps && (
@@ -122,13 +122,13 @@ const PanicPanel = ({ userCoordinates, disabled = false, onQueueEvent, queuedCou
           onClick={() => handlePress(btn)}
           disabled={disabled}
           aria-label={`Send ${btn.label} signal`}
-          className={`flex-1 w-full rounded-xl border ${btn.bg} ${btn.border} ${btn.glow}
+          className={`w-full min-h-[5.5rem] rounded-xl border ${btn.bg} ${btn.border} ${btn.glow}
             text-white font-bold tracking-widest uppercase
             transition-all duration-150 select-none
             focus:outline-none focus:ring-2 focus:ring-gold
             disabled:opacity-40 disabled:cursor-not-allowed
             flex flex-col items-center justify-center gap-1
-            text-xl sm:text-2xl md:text-3xl`}
+            text-xl sm:text-2xl`}
         >
           <span>{btn.label}</span>
           <span className="text-xs sm:text-sm font-normal opacity-70">{btn.sublabel}</span>
