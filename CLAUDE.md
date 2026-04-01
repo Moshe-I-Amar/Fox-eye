@@ -251,13 +251,13 @@ components/ui/Modal.jsx    — overlay modal
 | `src/hooks/useOfflineQueue.js` | Persist + flush field events queued while offline; returns `{ queue, enqueue, flush }` — backed by `localStorage` |
 | `src/pages/mobile/MobileFieldView.jsx` | Mobile page — GPS watcher, socket MOBILE session, Wake Lock, network-status detection, offline queue flush; route `/mobile` |
 | `src/pages/mobile/MobileLayout.jsx` | Mobile shell — `100dvh`, bottom nav (mobile) / sidebar (md+), safe-area padding; props: `connectionStatus`, `gpsStatus`, `wakeLockStatus`, `onBack` |
-| `src/pages/mobile/PanicPanel.jsx` | Three tactile panic buttons (INJURED/AMBUSH/LINK_UP); haptic on press/send; props: `userCoordinates`, `disabled`, `onQueueEvent`, `queuedCount` |
+| `src/pages/mobile/PanicPanel.jsx` | Three tactile panic buttons (INJURED/AMBUSH/LINK_UP); haptic on press/send; props: `userCoordinates`, `disabled`, `onQueueEvent`, `queuedCount`; offline sends via `onQueueEvent` — never disable based on socket state |
 | `src/pages/mobile/MobileFieldMap.jsx` | Hierarchy-scoped Leaflet map; props: `userCoordinates`, `initialZoom`, `showZoomControl`; includes center-on-me FAB |
 | `src/pages/mobile/MobileEventFeed.jsx` | Live field events list with refresh + active count; prop: `limit` |
 
 ### Map patterns
 - `MapContainer` parent div must have explicit height (`h-screen`, `h-[calc(...)]`, or `h-full` inside a flex container)
-- Mobile map uses `h-full` filling the flex-1 content area from `MobileLayout` — no pixel values
+- **Mobile map pattern — always use `absolute inset-0`**: wrap `MapContainer` in `<div className="absolute inset-0">` inside a `relative flex-1 min-h-0` shell. `height:100%` chains through flex-item computed sizes fail on mobile Safari; `absolute inset-0` gives Leaflet explicit pixel bounds that always resolve correctly.
 - Use `useMap()` hook for imperative control (`setView`, `flyTo`)
 - Leaflet coordinates are `[lat, lng]` — opposite of GeoJSON
 
@@ -278,8 +278,8 @@ components/ui/Modal.jsx    — overlay modal
 | React infinite re-render | Missing `useCallback`/`useMemo` in Dashboard deps |
 | Scope error non-admin | `scopeResolver.js` not populating `req.scope` correctly |
 | Invite creation fails with rank error | Actor operationalRole rank ≤ target rank — only higher ranks can invite lower |
-| Mobile map invisible | `MobileFieldMap` parent must be `h-full` inside a flex-1 container — `MobileLayout` content div handles this |
-| Panic button disabled unexpectedly | `connectionStatus === 'disconnected'` in `MobileFieldView` — check socket connect/auth |
+| Mobile map invisible / panic buttons collapse | `MobileLayout` content div must be `overflow-hidden min-h-0 flex flex-col`; `MobileFieldMap` outer div must be `relative flex-1 min-h-0 w-full` with `MapContainer` wrapped in `<div className="absolute inset-0">` — `height:100%` through flex-item computed sizes fails on mobile Safari |
+| Panic button disabled unexpectedly | `disabled` prop is always `false` in `MobileFieldView` — buttons should never be gated by socket state; if still disabled check the prop passed to `PanicPanel` directly |
 | Field event POST 422 velocity | Two rapid events with large coordinate delta — `validateAntiSpoof` in `fieldEventService.js` |
 | Panic send silently queued instead of sent | `navigator.onLine === false` or no `err.status` → `useOfflineQueue.enqueue()` was called; check `queuedCount` badge on PanicPanel |
 | Wake lock not acquired | Browser requires a user gesture before `wakeLock.request()` on some versions; also unavailable in non-secure (non-HTTPS) contexts |

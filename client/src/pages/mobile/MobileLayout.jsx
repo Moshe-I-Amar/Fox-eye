@@ -1,5 +1,4 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
 
 const TABS = [
   { key: 'panic', label: 'PANIC',  icon: '⚠' },
@@ -14,24 +13,30 @@ const CONNECTION_STYLES = {
 };
 
 const GPS_STYLES = {
-  locked:    { icon: '◎', color: 'text-emerald-400', title: 'GPS locked' },
-  searching: { icon: '◌', color: 'text-amber-400 animate-pulse', title: 'Searching GPS…' },
+  locked:      { icon: '◎', color: 'text-emerald-400', title: 'GPS locked' },
+  searching:   { icon: '◌', color: 'text-amber-400 animate-pulse', title: 'Searching GPS…' },
   unavailable: { icon: '⊗', color: 'text-red-400', title: 'GPS unavailable' }
 };
 
 /**
- * MobileLayout — full-screen shell for the field mobile UI.
+ * MobileLayout — full-screen shell. The map fills the entire viewport; header
+ * and bottom nav float as translucent overlays. Panel content (panic / feed)
+ * slides up as a bottom sheet, keeping the map always visible above it —
+ * the same pattern as Google Maps mobile.
  *
  * Props:
- *   activeTab        {string}   — 'panic' | 'map' | 'feed'
- *   onTabChange      {fn}       — (key: string) => void
- *   connectionStatus {string}   — 'connected' | 'reconnecting' | 'disconnected'
- *   gpsStatus        {string}   — 'locked' | 'searching' | 'unavailable'
- *   wakeLockStatus   {string}   — 'active' | 'released' | 'unsupported'
- *   onBack           {fn}       — optional; renders back arrow to /dashboard
+ *   mapSlot          {ReactNode} — always-visible full-screen base map
+ *   activeTab        {string}    — 'panic' | 'map' | 'feed'
+ *   onTabChange      {fn}        — (key: string) => void
+ *   connectionStatus {string}    — 'connected' | 'reconnecting' | 'disconnected'
+ *   gpsStatus        {string}    — 'locked' | 'searching' | 'unavailable'
+ *   wakeLockStatus   {string}    — 'active' | 'released' | 'unsupported'
+ *   onBack           {fn}        — optional; renders back arrow
+ *   children         {ReactNode} — overlay panel content (null/empty on map tab)
  */
 const MobileLayout = ({
   children,
+  mapSlot,
   activeTab,
   onTabChange,
   connectionStatus = 'disconnected',
@@ -42,14 +47,22 @@ const MobileLayout = ({
   const connStyle = CONNECTION_STYLES[connectionStatus] ?? CONNECTION_STYLES.disconnected;
   const gpsStyle  = GPS_STYLES[gpsStatus] ?? GPS_STYLES.searching;
 
+  // Sheet is visible for every tab except the pure map view.
+  const showPanel = activeTab !== 'map';
+
   return (
-    // 100dvh: accounts for mobile browser chrome hiding/showing (unlike h-screen / 100vh)
-    <div
-      className="flex flex-col bg-jet text-gold overflow-hidden"
-      style={{ height: '100dvh' }}
-    >
-      {/* ── Header ──────────────────────────────────────────────────── */}
-      <header className="flex items-center justify-between px-4 py-2 border-b border-gold/20 shrink-0 bg-charcoal/80 backdrop-blur-sm">
+    // Root: full-screen container. The map lives at z-0 here; all chrome floats above.
+    <div className="relative bg-jet overflow-hidden" style={{ height: '100dvh' }}>
+
+      {/* ── Base layer: map fills the entire viewport ─────────────────────── */}
+      {mapSlot}
+
+      {/* ── Floating header — always on top ───────────────────────────────── */}
+      <header
+        className="absolute top-0 inset-x-0 z-[500] flex items-center justify-between
+          px-4 py-2 bg-jet/75 backdrop-blur-md border-b border-gold/20"
+        style={{ paddingTop: 'max(0.5rem, env(safe-area-inset-top))' }}
+      >
         <div className="flex items-center gap-2">
           {onBack && (
             <button
@@ -66,7 +79,6 @@ const MobileLayout = ({
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Wake lock indicator — only shown when supported */}
           {wakeLockStatus !== 'unsupported' && (
             <span
               title={wakeLockStatus === 'active' ? 'Screen awake' : 'Screen lock inactive'}
@@ -79,16 +91,14 @@ const MobileLayout = ({
             </span>
           )}
 
-          {/* GPS status */}
           <span
             title={gpsStyle.title}
-            className={`text-sm leading-none ${gpsStyle.color}`}
             aria-label={gpsStyle.title}
+            className={`text-sm leading-none ${gpsStyle.color}`}
           >
             {gpsStyle.icon}
           </span>
 
-          {/* Connection status */}
           <div className="flex items-center gap-1.5" title={`Socket: ${connectionStatus}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${connStyle.dot}`} />
             <span className="text-[9px] tracking-widest text-gold/40 uppercase hidden sm:inline">
@@ -98,38 +108,39 @@ const MobileLayout = ({
         </div>
       </header>
 
-      {/* ── Content area ────────────────────────────────────────────── */}
-      {/* On md+ (tablet/desktop): show sidebar nav instead of bottom tabs */}
-      <div className="flex flex-1 overflow-hidden">
+      {/* ── Bottom sheet panel (panic / feed) ─────────────────────────────── */}
+      {/*
+        Sits above the map (z-[400]) but below the nav (z-[500]).
+        `translate-y-full` pushes the sheet off screen when on map tab;
+        `translate-y-0` slides it up for panic / feed.
+        max-h keeps the map always visible above the sheet — Google Maps style.
+      */}
+      <div
+        className={`absolute inset-x-0 z-[400]
+          bg-jet/92 backdrop-blur-md border-t border-gold/20
+          transition-transform duration-300 ease-out
+          ${showPanel ? 'translate-y-0' : 'translate-y-full'}`}
+        style={{
+          bottom: 'calc(3.5rem + env(safe-area-inset-bottom, 0px))',
+          maxHeight: '62vh'
+        }}
+      >
+        {/* Drag-handle visual cue (matches iOS / Google Maps aesthetic) */}
+        <div className="flex justify-center pt-2 pb-0.5 shrink-0">
+          <div className="w-9 h-1 rounded-full bg-gold/25" />
+        </div>
 
-        {/* Sidebar nav — only md and above */}
-        <nav className="hidden md:flex flex-col w-20 border-r border-gold/20 bg-charcoal shrink-0">
-          {TABS.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => onTabChange(tab.key)}
-              aria-current={activeTab === tab.key ? 'page' : undefined}
-              className={`flex flex-col items-center py-5 text-[10px] tracking-widest uppercase transition-colors
-                ${activeTab === tab.key
-                  ? 'text-gold border-r-2 border-gold bg-gold/5'
-                  : 'text-gold/40 hover:text-gold/70'}`}
-            >
-              <span className="text-xl leading-none mb-1.5">{tab.icon}</span>
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-
-        {/* Main content */}
-        <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        {/* Scrollable panel body */}
+        <div className="overflow-y-auto" style={{ maxHeight: 'calc(62vh - 1.25rem)' }}>
           {children}
         </div>
       </div>
 
-      {/* ── Bottom nav — mobile only ─────────────────────────────────── */}
+      {/* ── Floating bottom nav — always on top ───────────────────────────── */}
       <nav
-        className="flex md:hidden border-t border-gold/20 bg-charcoal shrink-0"
-        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        className="absolute bottom-0 inset-x-0 z-[500] flex
+          bg-jet/85 backdrop-blur-md border-t border-gold/20"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
       >
         {TABS.map((tab) => (
           <button
@@ -138,7 +149,7 @@ const MobileLayout = ({
             aria-current={activeTab === tab.key ? 'page' : undefined}
             className={`flex-1 flex flex-col items-center py-3 text-[10px] tracking-widest uppercase transition-colors
               ${activeTab === tab.key
-                ? 'text-gold border-t-2 border-gold'
+                ? 'text-gold border-t-2 border-gold -mt-px'
                 : 'text-gold/40 hover:text-gold/70'}`}
           >
             <span className="text-lg leading-none mb-1">{tab.icon}</span>
