@@ -5,6 +5,7 @@ import { EditControl } from 'react-leaflet-draw';
 import { Icon } from 'leaflet';
 import { userService } from '../services/usersApi';
 import { aoService } from '../services/aoApi';
+import { eventApi } from '../services/eventApi';
 import socketService from '../services/socketService';
 import { authService } from '../services/authApi';
 import { hierarchyService } from '../services/hierarchyApi';
@@ -15,6 +16,7 @@ import Modal from '../components/ui/Modal';
 import AlertBanner from '../components/ui/AlertBanner';
 import Badge from '../components/ui/Badge';
 import Navbar from '../components/layout/Navbar';
+import NotificationPrompt from '../components/ui/NotificationPrompt';
 import {
   DEFAULT_MAP_CENTER,
   DEFAULT_MAP_ZOOM,
@@ -28,6 +30,7 @@ import {
 } from '../config/constants';
 import useAOs from '../hooks/useAOs';
 import useViolations from '../hooks/useViolations';
+import useFieldEvents from '../hooks/useFieldEvents';
 
 const MapController = ({ center }) => {
   const map = useMap();
@@ -240,6 +243,45 @@ const createAoMarkerIcon = ({ color, icon, className = '', variant = 'pin' }) =>
   });
 };
 
+/** Color, display label, glyph, SVG path, alert tone and auto-dismiss per event type */
+const EVENT_TYPE_CONFIG = {
+  INJURED: { color: '#ef4444', label: 'Injured', glyph: '✚', svgPath: `<path d="M19 11 L19 27 M11 19 L27 19" stroke="white" stroke-width="5" stroke-linecap="round"/>`,                                                                                          alertTone: 'error', autoDismiss: false },
+  AMBUSH:  { color: '#f97316', label: 'Ambush',  glyph: '!', svgPath: `<path d="M19 11 L19 23" stroke="white" stroke-width="4.5" stroke-linecap="round"/><circle cx="19" cy="28.5" r="2.8" fill="white"/>`,                                                          alertTone: 'error', autoDismiss: false },
+  LINK_UP: { color: '#3b82f6', label: 'Link Up', glyph: '↑', svgPath: `<path d="M10 19 L19 10 L28 19 M19 10 L19 27" stroke="white" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`, alertTone: 'info',  autoDismiss: true  },
+};
+
+const EVENT_STATUS_OPACITY = { ACTIVE: 1, ACKNOWLEDGED: 0.7, RESOLVED: 0.4 };
+
+const STATUS_BADGE_CLASS = {
+  ACTIVE:       'bg-red-500/20 text-red-400',
+  ACKNOWLEDGED: 'bg-amber-500/20 text-amber-400',
+  RESOLVED:     'bg-gray-500/20 text-gray-400',
+};
+
+const buildEventMarkerSvg = ({ eventType, status }) => {
+  const cfg  = EVENT_TYPE_CONFIG[eventType] || { color: '#6b7280', svgPath: '' };
+  return `<svg width="28" height="36" viewBox="0 0 38 48" fill="none" xmlns="http://www.w3.org/2000/svg" style="opacity:${EVENT_STATUS_OPACITY[status] ?? 0.4}">
+  <defs>
+    <filter id="evs" x="-30%" y="-20%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="rgba(0,0,0,0.6)"/>
+    </filter>
+  </defs>
+  <path d="M19 2 C9 2 1 10 1 20 C1 30 19 46 19 46 C19 46 37 30 37 20 C37 10 29 2 19 2Z"
+        fill="${cfg.color}" filter="url(#evs)"/>
+  <circle cx="19" cy="19" r="13" fill="rgba(0,0,0,0.25)"/>
+  ${cfg.svgPath}
+</svg>`;
+};
+
+const createEventMarkerIcon = ({ eventType, status }) =>
+  new Icon({
+    iconUrl:     svgToDataUrl(buildEventMarkerSvg({ eventType, status })),
+    iconSize:    [28, 36],
+    iconAnchor:  [14, 35],
+    popupAnchor: [0, -36],
+    className:   status === 'ACTIVE' ? 'event-marker-active' : '',
+  });
+
 const isPointInPolygon = (point, polygon) => {
   if (!point || !polygon?.coordinates?.[0]?.length) {
     return false;
@@ -332,7 +374,9 @@ const MapComponent = ({
   onAOSelect,
   featureGroupRef,
   canManageAOs = false,
-  getCompanyIdentity
+  getCompanyIdentity,
+  fieldEvents = [],
+  onEventClick,
 }) => {
   const bindAoLayer = (aoId) => (layer) => {
     if (layer) {
@@ -557,6 +601,46 @@ const MapComponent = ({
             </Popup>
           </Marker>
         ))}
+
+      {/* Field event markers — coords pre-validated by visibleEvents memo */}
+      {fieldEvents.map((ev) => {
+          const [lng, lat] = ev.coordinates.coordinates;
+          const cfg = EVENT_TYPE_CONFIG[ev.eventType] || { color: '#6b7280', label: ev.eventType, glyph: '?' };
+          return (
+            <Marker
+              key={ev._id}
+              position={[lat, lng]}
+              icon={getCachedIcon(`event:${ev.eventType}:${ev.status}`, () => createEventMarkerIcon({ eventType: ev.eventType, status: ev.status }))}
+              eventHandlers={{ click: () => onEventClick?.(ev) }}
+              zIndexOffset={ev.status === 'ACTIVE' ? 500 : 0}
+            >
+              <Popup className="marker-popup-dark">
+                <div className="map-popup">
+                  <div className="map-popup-header">
+                    <span
+                      className="map-popup-avatar"
+                      style={{ backgroundColor: cfg.color, fontSize: '0.75rem', fontWeight: 700 }}
+                    >
+                      {cfg.glyph}
+                    </span>
+                    <div>
+                      <p className="map-popup-name">{cfg.label}</p>
+                      <p className="map-popup-sub">
+                        {new Date(ev.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="map-popup-footer">
+                    <span className={`map-popup-badge ${ev.status === 'ACTIVE' ? 'online' : 'offline'}`}>
+                      {ev.status}
+                    </span>
+                    <span className="map-popup-dist">{lat.toFixed(5)}, {lng.toFixed(5)}</span>
+                  </div>
+                </div>
+              </Popup>
+            </Marker>
+          );
+        })}
     </MapContainer>
   );
 };
@@ -613,6 +697,28 @@ const Dashboard = () => {
     currentUser?.role === 'admin' ||
     ['HQ', 'UNIT_COMMANDER'].includes(currentUser?.operationalRole);
   const { violations, loading: violationLoading, error: violationError } = useViolations(canViewViolations, violationFilters);
+  const { events: fieldEvents, loading: fieldEventsLoading } = useFieldEvents(50);
+  const [showResolvedEvents, setShowResolvedEvents] = useState(false);
+  const [eventAlert, setEventAlert] = useState(null);
+  const [respondingIds, setRespondingIds] = useState(new Set());
+  useEffect(() => {
+    if (!eventAlert?.autoDismiss) return;
+    const t = setTimeout(() => setEventAlert(null), 8000);
+    return () => clearTimeout(t);
+  }, [eventAlert]);
+
+  const { visibleEvents, activeEventCount } = useMemo(() => {
+    let active = 0;
+    const visible = [];
+    for (const ev of fieldEvents) {
+      if (ev.status === 'ACTIVE') active++;
+      const c = ev.coordinates?.coordinates;
+      if (!Array.isArray(c) || c.length !== 2) continue;
+      if (!showResolvedEvents && ev.status === 'RESOLVED') continue;
+      visible.push(ev);
+    }
+    return { visibleEvents: visible, activeEventCount: active };
+  }, [fieldEvents, showResolvedEvents]);
   const navigate = useNavigate();
 
   // Initialize socket connection
@@ -838,14 +944,29 @@ const Dashboard = () => {
     const handleSocketError = (error) => {
     };
 
+    const handleFieldEventNew = ({ event } = {}) => {
+      if (!event || event.status !== 'ACTIVE') return;
+      const cfg = EVENT_TYPE_CONFIG[event.eventType];
+      if (!cfg) return;
+      const sender = event.senderName || 'Unknown';
+      setEventAlert({
+        id: event._id,
+        message: `${cfg.glyph} ${cfg.label.toUpperCase()} — reported by ${sender}`,
+        tone: cfg.alertTone,
+        autoDismiss: cfg.autoDismiss,
+      });
+    };
+
     socketService.on('location:update', handleLocationUpdate);
     socketService.on('presence:update', handlePresenceUpdate);
     socketService.on('error', handleSocketError);
+    socketService.on('field:event:new', handleFieldEventNew);
 
     return () => {
       socketService.off('location:update', handleLocationUpdate);
       socketService.off('presence:update', handlePresenceUpdate);
       socketService.off('error', handleSocketError);
+      socketService.off('field:event:new', handleFieldEventNew);
     };
   }, [realtimeEnabled, mapCenter, radius, currentUserId, userLocation]);
 
@@ -1442,17 +1563,39 @@ const Dashboard = () => {
     setViewportBounds(viewport);
   }, []);
 
-  const focusViolation = (violation) => {
-    const coords = violation?.coordinates;
-    if (!Array.isArray(coords) || coords.length !== 2) {
-      return;
-    }
-    const [lng, lat] = coords;
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return;
-    }
-    setMapCenter([lat, lng]);
+  const normalizeCoords = (raw) => {
+    if (!Array.isArray(raw) || raw.length !== 2) return null;
+    const [lng, lat] = raw;
+    return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
   };
+
+  const focusViolation = (violation) => {
+    const center = normalizeCoords(violation?.coordinates);
+    if (center) setMapCenter(center);
+  };
+
+  const focusEvent = (ev) => {
+    const center = normalizeCoords(ev?.coordinates?.coordinates);
+    if (center) setMapCenter(center);
+  };
+
+  const handleEventRespond = useCallback(async (id, action) => {
+    setRespondingIds((prev) => new Set([...prev, id]));
+    try {
+      await (action === 'acknowledge'
+        ? eventApi.acknowledgeEvent(id)
+        : eventApi.resolveEvent(id));
+      setEventAlert((prev) => (prev?.id === id ? null : prev));
+    } catch {
+      // socket will resync state on next update
+    } finally {
+      setRespondingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }, []);
 
   const getCompanyIdentity = (ao) => {
     const company = hierarchyMap.companies[ao?.companyId];
@@ -1502,7 +1645,26 @@ const Dashboard = () => {
           />
         </div>
       )}
-      
+
+      {eventAlert && (
+        <div className="px-6 pt-3 shrink-0">
+          <AlertBanner
+            message={eventAlert.message}
+            tone={eventAlert.tone}
+            onDismiss={() => setEventAlert(null)}
+            action={eventAlert.id ? {
+              label: 'ACK',
+              onClick: () => handleEventRespond(eventAlert.id, 'acknowledge'),
+              disabled: respondingIds.has(eventAlert.id),
+            } : undefined}
+          />
+        </div>
+      )}
+
+      <div className="px-6 pt-3 shrink-0">
+        <NotificationPrompt />
+      </div>
+
       {/* Mobile sidebar toggle */}
       <div className="lg:hidden shrink-0 flex items-center gap-2 px-4 pt-3">
         <button
@@ -1620,6 +1782,106 @@ const Dashboard = () => {
                       )}
                     </div>
                   ))
+                )}
+              </div>
+            </div>
+          </Card>
+
+          {/* Field Events panel — visible to all users */}
+          <Card className="mb-6" padding="small">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gold">Field Events</h3>
+                <div className="flex items-center gap-2">
+                  {activeEventCount > 0 && (
+                    <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded-full font-semibold">
+                      {activeEventCount} ACTIVE
+                    </span>
+                  )}
+                  <span className="text-xs text-gold/60">{visibleEvents.length}</span>
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-gold/60 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showResolvedEvents}
+                  onChange={(e) => setShowResolvedEvents(e.target.checked)}
+                  className="accent-gold"
+                />
+                Show resolved
+              </label>
+              <div className="space-y-2 max-h-44 overflow-y-auto scrollbar-thin">
+                {fieldEventsLoading ? (
+                  <div className="text-xs text-gold/50">Loading events...</div>
+                ) : visibleEvents.length === 0 ? (
+                  <div className="flex flex-col items-center py-4 text-gold/40 gap-1">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <p className="text-xs">No active field events</p>
+                  </div>
+                ) : (
+                  visibleEvents.map((ev) => {
+                    const cfg        = EVENT_TYPE_CONFIG[ev.eventType] || { color: '#6b7280', label: ev.eventType, glyph: '?' };
+                    const isPending  = respondingIds.has(ev._id);
+                    const canAck     = ev.status === 'ACTIVE';
+                    const canResolve = ev.status === 'ACTIVE' || ev.status === 'ACKNOWLEDGED';
+                    return (
+                      <div
+                        key={ev._id}
+                        className="rounded-lg border border-gold/10 px-3 py-2 hover:border-gold/30 transition-colors"
+                      >
+                        {/* Row header — click to focus map */}
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => focusEvent(ev)}
+                          onKeyDown={(e) => e.key === 'Enter' && focusEvent(ev)}
+                          className="flex items-center justify-between cursor-pointer"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="inline-flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-bold text-white shrink-0"
+                              style={{ backgroundColor: cfg.color }}
+                            >
+                              {cfg.glyph}
+                            </span>
+                            <span className="text-xs text-gold/80 font-semibold">{cfg.label}</span>
+                          </div>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${STATUS_BADGE_CLASS[ev.status] ?? STATUS_BADGE_CLASS.RESOLVED}`}>
+                            {ev.status}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-gold/50 mt-0.5">
+                          {new Date(ev.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                        {(canAck || canResolve) && (
+                          <div className="flex gap-1.5 mt-2">
+                            {canAck && (
+                              <button
+                                type="button"
+                                disabled={isPending}
+                                onClick={() => handleEventRespond(ev._id, 'acknowledge')}
+                                className="flex-1 text-[10px] font-semibold py-1 rounded border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 disabled:opacity-40 transition-colors"
+                              >
+                                {isPending ? '…' : 'ACK'}
+                              </button>
+                            )}
+                            {canResolve && (
+                              <button
+                                type="button"
+                                disabled={isPending}
+                                onClick={() => handleEventRespond(ev._id, 'resolve')}
+                                className="flex-1 text-[10px] font-semibold py-1 rounded border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40 transition-colors"
+                              >
+                                {isPending ? '…' : 'RESOLVE'}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -1783,6 +2045,8 @@ const Dashboard = () => {
               featureGroupRef={featureGroupRef}
               canManageAOs={canManageAOs}
               getCompanyIdentity={getCompanyIdentity}
+              fieldEvents={visibleEvents}
+              onEventClick={focusEvent}
             />
           </Card>
         </div>

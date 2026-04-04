@@ -19,6 +19,7 @@ fox-eye/
 - Node.js, **CommonJS** (`require`/`module.exports` — never use `import/export`)
 - Express 4.x, Mongoose 8.x, Socket.IO 4.x
 - JWT auth (jsonwebtoken + bcryptjs), express-validator, helmet, express-rate-limit
+- **web-push** — VAPID-based Web Push notifications (requires `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` env vars)
 
 ### Patterns — always follow these
 ```js
@@ -74,12 +75,16 @@ await logAdminAction({ action: 'invite.create', actorUserId, targetType: 'invite
 | `src/services/hierarchyService.js` | `resolveHierarchyPath()`, `ensureNoActiveChildren()`, `getHierarchyTree()` |
 | `src/services/adminAuditService.js` | `logAdminAction()` — writes to AdminAuditLog collection |
 | `src/controllers/inviteController.js` | `createInvite`, `validateInviteToken`, `listInvites`, `revokeInvite` |
-| `src/controllers/eventController.js` | `createEvent`, `listEvents`, `acknowledgeEvent`, `resolveEvent` |
+| `src/controllers/eventController.js` | `createEvent`, `listEvents`, `acknowledgeEvent`, `resolveEvent` — fires push after create |
+| `src/controllers/pushController.js` | `getVapidPublicKey`, `subscribe`, `unsubscribe` — Web Push subscription management |
 | `src/models/InviteToken.js` | Invite token schema — token, roles, hierarchy, expiry, usedAt |
 | `src/models/AdminAuditLog.js` | Audit trail schema — action, actorUserId, before/after |
 | `src/models/FieldEvent.js` | Field event schema — eventType, senderId, GeoJSON Point coords, status lifecycle, denormalized hierarchy |
+| `src/models/PushSubscription.js` | Web Push subscription schema — userId, endpoint, keys (p256dh/auth), denormalized role + hierarchy for scope targeting |
 | `src/services/fieldEventService.js` | `createFieldEvent`, `listFieldEvents`, `acknowledgeFieldEvent`, `resolveFieldEvent`, `validateAntiSpoof` (velocity + timestamp skew) |
+| `src/services/pushService.js` | `sendPushForFieldEvent(event)` — sends VAPID push to all subscribed in-scope users; auto-prunes expired endpoints (404/410) |
 | `src/routes/eventRoutes.js` | Field event routes — POST rate-limited 10/hr per user ID |
+| `src/routes/pushRoutes.js` | Push subscription routes — GET vapid-public-key (public), POST/DELETE /subscribe (auth) |
 
 ### Domain model
 - **User**: location (GeoJSON Point, 2dsphere index), role (`admin`/`user`), operationalRole, unitId/companyId/teamId/squadId (all required), status (`active`/`pending`/`rejected`, default `active`), active (bool, default true)
@@ -88,6 +93,7 @@ await logAdminAction({ action: 'invite.create', actorUserId, targetType: 'invite
 - **ViolationEvent**: type (`APPROACHING_BOUNDARY` | `BREACH` | `SUSTAINED_BREACH`), userId, aoId, coordinates, timestamp
 - **AdminAuditLog**: action string (e.g. `invite.create`), actorUserId, targetType, targetId, before/after snapshots
 - **FieldEvent**: eventType (`INJURED` | `AMBUSH` | `LINK_UP`), senderId, coordinates (GeoJSON Point, 2dsphere), status (`ACTIVE` | `ACKNOWLEDGED` | `RESOLVED`), acknowledgedBy/acknowledgedAt, resolvedBy/resolvedAt, unitId/companyId/teamId/squadId (denormalized from sender)
+- **PushSubscription**: userId, endpoint (unique), keys.p256dh, keys.auth, role, unitId/companyId/teamId/squadId (denormalized for scope-based push targeting); upserted on subscribe, pruned on 404/410 response from push service
 - **Hierarchy**: Unit → Company → Team → Squad (each has name, parentId, commanderId, active)
 - **Coordinate convention**: MongoDB/GeoJSON = `[lng, lat]` · Leaflet = `[lat, lng]` ← common bug source
 
@@ -146,9 +152,14 @@ Violations:
 
 Field Events (rate limited: 10/hr per user for POST):
   GET    /api/events                   # List field events in scope (auth); ?status=&eventType=&page=&limit=
-  POST   /api/events                   # Report field event — INJURED/AMBUSH/LINK_UP (auth)
+  POST   /api/events                   # Report field event — INJURED/AMBUSH/LINK_UP (auth); also fires Web Push
   PATCH  /api/events/:id/acknowledge   # Acknowledge active event (auth)
   PATCH  /api/events/:id/resolve       # Resolve event (auth)
+
+Push Notifications:
+  GET    /api/push/vapid-public-key    # VAPID public key (public — no auth)
+  POST   /api/push/subscribe           # Save push subscription for current user (auth)
+  DELETE /api/push/subscribe           # Remove push subscription (auth); body: { endpoint }
 
 Admin (auth + admin role + HQ/UC/CC operationalRole):
   GET    /api/admin/hierarchy/tree
@@ -171,7 +182,8 @@ System:
 `location:update`, `location:request`, `presence:subscribe`, `viewport:subscribe`
 
 Field event broadcasts (server → in-scope sockets):
-`field:event:new`, `field:event:acknowledged`, `field:event:resolved`
+`field:event:new` — payload `{ event, timestamp }` where `event` includes `senderName` (denormalized from sender doc at broadcast time)
+`field:event:acknowledged`, `field:event:resolved`
 
 Socket connect now accepts optional session type: `socketService.connect(token, { sessionType: 'MOBILE' | 'WEB' })` — stored as `socket.sessionType` on the server (transient, not persisted).
 
@@ -181,7 +193,7 @@ Socket connect now accepts optional session type: `socketService.connect(token, 
 
 ### Stack
 - React 18 with hooks only (no class components)
-- Vite 5 + **vite-plugin-pwa** (Workbox) — PWA service worker, app manifest, tile caching
+- Vite 5 + **vite-plugin-pwa** (`injectManifest` strategy) — custom `src/sw.js` service worker with Workbox caching + Web Push handler; generated as `dist/sw.js`
 - Tailwind CSS 3.x with custom dark theme
 - Leaflet 1.9 + react-leaflet 4.x + leaflet-draw
 - Axios with JWT interceptors via `services/api.js`
@@ -225,10 +237,12 @@ Text:          text-white (primary)  text-gray-400 (secondary)  text-red-400 (er
 
 ### Existing UI components — use these, don't recreate
 ```
-components/ui/Button.jsx   — variants: primary | secondary | outline | ghost
-components/ui/Card.jsx     — glass-card with gold border
-components/ui/Input.jsx    — dark styled input
-components/ui/Modal.jsx    — overlay modal
+components/ui/Button.jsx              — variants: primary | secondary | outline | ghost
+components/ui/Card.jsx                — glass-card with gold border
+components/ui/Input.jsx               — dark styled input
+components/ui/Modal.jsx               — overlay modal
+components/ui/AlertBanner.jsx         — contextual message bar; props: message, tone (warning|error|success|info), onDismiss, action ({ label, onClick, disabled })
+components/ui/NotificationPrompt.jsx  — inline push-notification opt-in/opt-out banner; self-contained (uses useNotifications hook); hides if unsupported or denied
 ```
 
 ### Key files
@@ -237,7 +251,7 @@ components/ui/Modal.jsx    — overlay modal
 | `src/App.jsx` | Routing wrapped in `<AuthProvider>`; uses `<RouteGuard>` for protected routes |
 | `src/context/AuthContext.jsx` | `AuthProvider` + `useAuth()` hook — single source of truth for auth state |
 | `src/components/layout/RouteGuard.jsx` | Composable route guard (props: requireRole, requireOperationalRoles, fallback) |
-| `src/pages/Dashboard.jsx` | Main map view, live location, socket |
+| `src/pages/Dashboard.jsx` | Main map view, live location, socket; field event markers (INJURED/AMBUSH/LINK_UP pins, pulse on ACTIVE) + sidebar Field Events panel with focus-on-click + inline ACK/RESOLVE buttons; in-app AlertBanner on `field:event:new` with one-click ACK (INJURED/AMBUSH stays until dismissed, LINK_UP auto-dismisses after 8 s) |
 | `src/pages/Admin.jsx` | AO management, violations list |
 | `src/pages/AdminManagement.jsx` | User + hierarchy management |
 | `src/pages/Register.jsx` | Invite-gated registration — requires `?token=` URL param |
@@ -247,13 +261,16 @@ components/ui/Modal.jsx    — overlay modal
 | `src/services/adminApi.js` | Admin CRUD + `createInvite()`, `listInvites()`, `revokeInvite()` |
 | `src/services/eventApi.js` | `createEvent()`, `getEvents()`, `acknowledgeEvent()`, `resolveEvent()` |
 | `src/services/socketService.js` | Socket.IO client singleton; `connect(token, { sessionType })` |
+| `src/services/pushService.js` | Client push helpers: `subscribeToPush()`, `unsubscribeFromPush()`, `getSubscription()`, `requestNotificationPermission()` |
 | `src/hooks/useFieldEvents.js` | Fetch + live socket subscription for field events; returns `{ events, loading, error, refetch }` |
 | `src/hooks/useOfflineQueue.js` | Persist + flush field events queued while offline; returns `{ queue, enqueue, flush }` — backed by `localStorage` |
+| `src/hooks/useNotifications.js` | Push notification state — `{ supported, permission, subscribed, loading, error, enable, disable }` |
+| `src/sw.js` | Custom service worker source (injectManifest mode) — Workbox precache + runtime caching + `push` event handler + `notificationclick` handler |
 | `src/pages/mobile/MobileFieldView.jsx` | Mobile page — GPS watcher, socket MOBILE session, Wake Lock, network-status detection, offline queue flush; route `/mobile` |
 | `src/pages/mobile/MobileLayout.jsx` | Mobile shell — `100dvh`, bottom nav (mobile) / sidebar (md+), safe-area padding; props: `connectionStatus`, `gpsStatus`, `wakeLockStatus`, `onBack` |
 | `src/pages/mobile/PanicPanel.jsx` | Three tactile panic buttons (INJURED/AMBUSH/LINK_UP); haptic on press/send; props: `userCoordinates`, `disabled`, `onQueueEvent`, `queuedCount`; offline sends via `onQueueEvent` — never disable based on socket state |
 | `src/pages/mobile/MobileFieldMap.jsx` | Hierarchy-scoped Leaflet map; props: `userCoordinates`, `initialZoom`, `showZoomControl`; includes center-on-me FAB |
-| `src/pages/mobile/MobileEventFeed.jsx` | Live field events list with refresh + active count; prop: `limit` |
+| `src/pages/mobile/MobileEventFeed.jsx` | Live field events list with refresh + active count + inline ACK/RESOLVE buttons per event; prop: `limit` |
 
 ### Map patterns
 - `MapContainer` parent div must have explicit height (`h-screen`, `h-[calc(...)]`, or `h-full` inside a flex container)
@@ -283,6 +300,10 @@ components/ui/Modal.jsx    — overlay modal
 | Field event POST 422 velocity | Two rapid events with large coordinate delta — `validateAntiSpoof` in `fieldEventService.js` |
 | Panic send silently queued instead of sent | `navigator.onLine === false` or no `err.status` → `useOfflineQueue.enqueue()` was called; check `queuedCount` badge on PanicPanel |
 | Wake lock not acquired | Browser requires a user gesture before `wakeLock.request()` on some versions; also unavailable in non-secure (non-HTTPS) contexts |
+| Push subscription silently fails | VAPID keys missing from server `.env` — `GET /api/push/vapid-public-key` returns 503; generate keys with `npx web-push generate-vapid-keys` |
+| Push prompt never appears | Browser blocked notifications (permission=`denied`) or non-HTTPS context — `NotificationPrompt` hides itself in both cases |
+| SW push handler missing after build | `vite.config.js` must use `strategies: 'injectManifest'` pointing to `src/sw.js`; do not switch back to `generateSW` mode |
+| Field event markers not showing on map | `ev.coordinates.coordinates` is `[lng, lat]` (GeoJSON) — Leaflet needs `[lat, lng]`; also check that `useFieldEvents` is mounted and events have valid coords |
 
 ---
 

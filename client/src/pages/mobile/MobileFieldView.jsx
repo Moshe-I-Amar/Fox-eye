@@ -6,6 +6,7 @@ import MobileLayout    from './MobileLayout';
 import PanicPanel      from './PanicPanel';
 import MobileFieldMap  from './MobileFieldMap';
 import MobileEventFeed from './MobileEventFeed';
+import NotificationPrompt from '../../components/ui/NotificationPrompt';
 
 /**
  * MobileFieldView — root page for the field mobile interface.
@@ -143,12 +144,17 @@ const MobileFieldView = () => {
       onBack={handleBack}
     >
       {activeTab === 'panic' && (
-        <PanicPanel
-          userCoordinates={userCoords}
-          disabled={isPanelDisabled}
-          onQueueEvent={enqueue}
-          queuedCount={queue.length}
-        />
+        <>
+          <div className="px-4 pt-3 pb-1">
+            <NotificationPrompt />
+          </div>
+          <PanicPanel
+            userCoordinates={userCoords}
+            disabled={isPanelDisabled}
+            onQueueEvent={enqueue}
+            queuedCount={queue.length}
+          />
+        </>
       )}
       {activeTab === 'feed' && (
         <MobileEventFeed limit={25} />

@@ -2,6 +2,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const { AppError } = require('../utils/errors');
 const { buildScopeQuery } = require('../utils/filterByScope');
 const { LocationService } = require('../services/locationService');
+const { sendPushForFieldEvent } = require('../services/pushService');
 const {
   validateAntiSpoof,
   MAX_TIMESTAMP_SKEW_MS,
@@ -44,10 +45,14 @@ const createEvent = asyncHandler(async (req, res) => {
 
   try {
     const socketService = getSocketService();
-    socketService.broadcastFieldEvent(event);
+    const eventObj = event.toObject ? event.toObject() : event;
+    socketService.broadcastFieldEvent({ ...eventObj, senderName: req.userDoc.name });
   } catch (_) {
     console.warn('Field event socket broadcast failed');
   }
+
+  // Fire-and-forget Web Push to subscribed users in scope
+  sendPushForFieldEvent(event).catch(() => {});
 
   res.status(201).json({ success: true, data: { event } });
 });

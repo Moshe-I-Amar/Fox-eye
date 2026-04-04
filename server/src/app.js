@@ -18,6 +18,7 @@ const hierarchyRoutes = require('./routes/hierarchyRoutes');
 const violationRoutes = require('./routes/violationRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const eventRoutes = require('./routes/eventRoutes');
+const pushRoutes  = require('./routes/pushRoutes');
 
 const PORT = process.env.PORT || 5000;
 
@@ -144,6 +145,7 @@ const createApp = () => {
   app.use('/api/aos', aoRoutes);
   app.use('/api/violations', violationRoutes);
   app.use('/api/events', eventRoutes);
+  app.use('/api/push',   pushRoutes);
   app.use('/api/admin', adminRoutes);
 
   app.use('*', (req, res, next) => {

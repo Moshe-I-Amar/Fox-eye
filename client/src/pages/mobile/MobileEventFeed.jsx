@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
 import useFieldEvents from '../../hooks/useFieldEvents';
+import { eventApi } from '../../services/eventApi';
 
 const TYPE_CONFIG = {
   INJURED: { label: 'INJURED', variant: 'red',   sublabel: 'Patzua' },
@@ -36,6 +37,24 @@ const formatTime = (iso) => {
  */
 const MobileEventFeed = ({ limit = 20 }) => {
   const { events, loading, error, refetch } = useFieldEvents(limit);
+  const [respondingIds, setRespondingIds] = useState(new Set());
+
+  const respond = useCallback(async (id, action) => {
+    setRespondingIds((prev) => new Set([...prev, id]));
+    try {
+      await (action === 'acknowledge'
+        ? eventApi.acknowledgeEvent(id)
+        : eventApi.resolveEvent(id));
+    } catch {
+      // socket resync will correct state
+    } finally {
+      setRespondingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  }, []);
 
   const activeCount = events.filter((e) => e.status === 'ACTIVE').length;
 
@@ -89,30 +108,58 @@ const MobileEventFeed = ({ limit = 20 }) => {
           const typeCfg   = TYPE_CONFIG[event.eventType]   || { label: event.eventType, variant: 'gray', sublabel: '' };
           const statusCfg = STATUS_CONFIG[event.status]    || { label: event.status,    variant: 'gray' };
           const isActive  = event.status === 'ACTIVE';
+          const isPending = respondingIds.has(event._id);
+          const canAck    = event.status === 'ACTIVE';
+          const canResolve = event.status === 'ACTIVE' || event.status === 'ACKNOWLEDGED';
 
           return (
             <div
               key={event._id}
-              className={`px-4 py-3 flex items-start gap-3 border-b border-gold/10
-                ${isActive ? 'bg-red-500/5' : ''}`}
+              className={`px-4 py-3 border-b border-gold/10 ${isActive ? 'bg-red-500/5' : ''}`}
             >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1 flex-wrap">
-                  <Badge variant={typeCfg.variant} size="sm">{typeCfg.label}</Badge>
-                  <Badge variant={statusCfg.variant} size="sm">{statusCfg.label}</Badge>
-                </div>
-                <div className="text-xs text-gold/70 truncate">
-                  {event.senderId?.name || 'Unknown'} · {typeCfg.sublabel}
-                </div>
-                {event.acknowledgedBy && (
-                  <div className="text-[10px] text-gold/40 mt-0.5">
-                    Ack: {event.acknowledgedBy?.name || '—'}
+              <div className="flex items-start gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <Badge variant={typeCfg.variant} size="sm">{typeCfg.label}</Badge>
+                    <Badge variant={statusCfg.variant} size="sm">{statusCfg.label}</Badge>
                   </div>
-                )}
+                  <div className="text-xs text-gold/70 truncate">
+                    {event.senderId?.name || 'Unknown'} · {typeCfg.sublabel}
+                  </div>
+                  {event.acknowledgedBy && (
+                    <div className="text-[10px] text-gold/40 mt-0.5">
+                      Ack: {event.acknowledgedBy?.name || '—'}
+                    </div>
+                  )}
+                </div>
+                <div className="text-[10px] text-gold/40 whitespace-nowrap pt-0.5 shrink-0">
+                  {formatTime(event.createdAt)}
+                </div>
               </div>
-              <div className="text-[10px] text-gold/40 whitespace-nowrap pt-0.5 shrink-0">
-                {formatTime(event.createdAt)}
-              </div>
+              {(canAck || canResolve) && (
+                <div className="flex gap-2 mt-2.5">
+                  {canAck && (
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() => respond(event._id, 'acknowledge')}
+                      className="flex-1 text-xs font-semibold py-1.5 rounded-lg border border-amber-500/40 text-amber-400 hover:bg-amber-500/10 active:bg-amber-500/20 disabled:opacity-40 transition-colors min-h-[36px]"
+                    >
+                      {isPending ? '…' : 'ACK'}
+                    </button>
+                  )}
+                  {canResolve && (
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      onClick={() => respond(event._id, 'resolve')}
+                      className="flex-1 text-xs font-semibold py-1.5 rounded-lg border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 active:bg-emerald-500/20 disabled:opacity-40 transition-colors min-h-[36px]"
+                    >
+                      {isPending ? '…' : 'RESOLVE'}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
