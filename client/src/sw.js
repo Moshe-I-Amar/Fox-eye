@@ -7,9 +7,12 @@ import { ExpirationPlugin } from 'workbox-expiration';
 // Injected by vite-plugin-pwa — must be present for injectManifest mode
 precacheAndRoute(self.__WB_MANIFEST);
 
-// API calls — Network-first (10 s timeout, then cache fallback)
+// API calls — Network-first (10 s timeout, then cache fallback).
+// Exclude /api/auth/* — session checks must never be served from cache;
+// a stale 200 for /api/auth/me would make the app think the user is
+// still logged in after their cookie expired or was cleared on logout.
 registerRoute(
-  ({ url }) => url.pathname.startsWith('/api/'),
+  ({ url }) => url.pathname.startsWith('/api/') && !url.pathname.startsWith('/api/auth/'),
   new NetworkFirst({
     cacheName: 'api-cache',
     networkTimeoutSeconds: 10,
