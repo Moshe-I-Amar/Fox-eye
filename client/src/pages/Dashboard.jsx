@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, FeatureGroup, Polygon } from 'react-leaflet';
 import { EditControl } from 'react-leaflet-draw';
 import { Icon } from 'leaflet';
@@ -699,7 +700,12 @@ const Dashboard = () => {
   });
   const [companyOptions, setCompanyOptions] = useState([]);
   const featureGroupRef = useRef(null);
-  const currentUser = authService.getCurrentUser();
+  // Use AuthContext as the single source of truth for the current user.
+  // Avoids stale localStorage reads when the session has silently expired
+  // (e.g., old SW serving a cached getMe() 200 after the JWT actually expired).
+  const { user: currentUser } = useAuth();
+  const currentUserRef = useRef(currentUser);
+  currentUserRef.current = currentUser;
   const currentUserId = currentUser?.id || currentUser?._id;
   const canManageAOs = currentUser?.role === 'admin' || currentUser?.operationalRole === 'COMPANY_COMMANDER';
   const canViewViolations =
@@ -1183,8 +1189,9 @@ const Dashboard = () => {
     const polygon = toGeoPolygon(event.layer.getLatLngs());
     if (!polygon) return;
 
-    // Read latest user/companies via ref/service so deps stay empty.
-    const user = authService.getCurrentUser();
+    // Read latest user/companies via refs so deps stay empty (prevents
+    // react-leaflet-draw from accumulating duplicate event handler wrappers).
+    const user = currentUserRef.current;
     const firstCompanyId = visibleCompaniesRef.current[0]?._id || '';
 
     setAoDraft({ polygon, layer: event.layer });
