@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import socketService from '../../services/socketService';
 import useOfflineQueue   from '../../hooks/useOfflineQueue';
+import useFieldEvents    from '../../hooks/useFieldEvents';
 import MobileLayout    from './MobileLayout';
 import PanicPanel      from './PanicPanel';
 import MobileFieldMap  from './MobileFieldMap';
@@ -13,6 +14,9 @@ import NotificationPrompt from '../../components/ui/NotificationPrompt';
  *
  * Manages: socket connection, GPS watching, wake lock, network status,
  * offline event queue, connection/GPS status indicators.
+ *
+ * Events are lifted here so both MobileFieldMap (markers) and
+ * MobileEventFeed (list) share the same live data without double-fetching.
  *
  * Layout: MobileFieldMap is always the full-screen base layer (passed as
  * `mapSlot`). PanicPanel and MobileEventFeed render as bottom-sheet children
@@ -28,9 +32,14 @@ const MobileFieldView = () => {
   const [connectionStatus,  setConnectionStatus]  = useState('disconnected');
   const [gpsStatus,         setGpsStatus]         = useState('searching');
   const [wakeLockStatus,    setWakeLockStatus]    = useState('unsupported');
+  // Coords ([lng, lat]) to fly the map to when user taps "Show on map" in feed
+  const [mapFocusCoords,    setMapFocusCoords]    = useState(null);
 
   const wakeLockRef = useRef(null);
   const { queue, enqueue, flush } = useOfflineQueue();
+
+  // Shared event state — used by both map markers and event feed
+  const { events, loading: eventsLoading, error: eventsError, refetch: refetchEvents, updateEvent } = useFieldEvents(25);
 
   // ── Wake Lock ──────────────────────────────────────────────────────
   const acquireWakeLock = useCallback(async () => {
@@ -70,10 +79,7 @@ const MobileFieldView = () => {
 
   // ── Socket connection ──────────────────────────────────────────────
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (!token) { navigate('/login'); return; }
-
-    socketService.connect(token, { sessionType: 'MOBILE' })
+    socketService.connect(null, { sessionType: 'MOBILE' })
       .then(() => setConnectionStatus('connected'))
       .catch(() => setConnectionStatus('disconnected'));
 
@@ -123,6 +129,12 @@ const MobileFieldView = () => {
 
   const handleBack = useCallback(() => navigate('/dashboard'), [navigate]);
 
+  // Switches to MAP tab and flies to the given [lng, lat] coords
+  const handleShowOnMap = useCallback((coords) => {
+    setMapFocusCoords(coords);
+    setActiveTab('map');
+  }, []);
+
   // Panic buttons are never disabled by socket state — events go via REST API
   // and the offline queue handles network failures gracefully.
   const isPanelDisabled = false;
@@ -132,6 +144,9 @@ const MobileFieldView = () => {
       mapSlot={
         <MobileFieldMap
           userCoordinates={userCoords}
+          events={events}
+          focusCoords={mapFocusCoords}
+          onFocusConsumed={() => setMapFocusCoords(null)}
           showZoomControl={window.innerWidth >= 768}
           gpsStatus={gpsStatus}
         />
@@ -157,7 +172,14 @@ const MobileFieldView = () => {
         </>
       )}
       {activeTab === 'feed' && (
-        <MobileEventFeed limit={25} />
+        <MobileEventFeed
+          events={events}
+          loading={eventsLoading}
+          error={eventsError}
+          refetch={refetchEvents}
+          onShowOnMap={handleShowOnMap}
+          onEventUpdate={updateEvent}
+        />
       )}
     </MobileLayout>
   );

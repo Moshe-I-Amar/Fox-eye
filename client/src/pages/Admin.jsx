@@ -78,12 +78,12 @@ const Admin = () => {
       setRealtimeNotice('Live updates are unavailable. Using HTTP fallback.');
     };
 
-    const handleAuthError = () => {
+    const handleAuthError = async () => {
       setRealtimeStatus('offline');
       setRealtimeEnabled(false);
       setRealtimeNoticeTone('error');
       setRealtimeNotice('Session expired. Redirecting to login...');
-      authService.logout();
+      await authService.logout();
       navigate('/login', {
         replace: true,
         state: {
@@ -101,26 +101,21 @@ const Admin = () => {
     socketService.on('auth_error', handleAuthError);
 
     const initSocket = async () => {
-      const token = localStorage.getItem('token');
-      const user = authService.getCurrentUser();
-      
-      if (token && user?.role === 'admin') {
-        try {
-          await socketService.connect(token);
-          setRealtimeEnabled(true);
-          setRealtimeStatus('connected');
-          
-          // Subscribe to presence updates
-          socketService.subscribeToPresence();
-          
-        } catch (error) {
-          const message = `${error?.message || ''}`.toLowerCase();
-          if (message.includes('authentication error') || message.includes('token expired') || message.includes('invalid token')) {
-            return;
-          }
-          setRealtimeEnabled(false);
-          setRealtimeStatus('offline');
+      try {
+        await socketService.connect(null);
+        setRealtimeEnabled(true);
+        setRealtimeStatus('connected');
+
+        // Subscribe to presence updates
+        socketService.subscribeToPresence();
+
+      } catch (error) {
+        const message = `${error?.message || ''}`.toLowerCase();
+        if (message.includes('authentication error') || message.includes('token expired') || message.includes('invalid token')) {
+          return;
         }
+        setRealtimeEnabled(false);
+        setRealtimeStatus('offline');
       }
     };
 

@@ -11,8 +11,8 @@ const Navbar = ({ realtimeStatus = 'offline' }) => {
   const user = authService.getCurrentUser();
   const [healthStatus, setHealthStatus] = useState('unknown');
 
-  const handleLogout = () => {
-    authService.logout();
+  const handleLogout = async () => {
+    await authService.logout();
     navigate('/login');
   };
 

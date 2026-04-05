@@ -103,7 +103,15 @@ const escapeXml = (value = '') =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-const isImageUrl = (value = '') => /^(data:image|https?:\/\/|\/|blob:)/i.test(value.trim());
+const isImageUrl = (value = '') =>
+  /^(data:image\/(?!svg\+xml)[a-z0-9+.-]+;|https?:\/\/|\/[^/]|blob:)/i.test(value.trim());
+
+const sanitizeColor = (value = '') => {
+  const trimmed = (value || '').trim();
+  if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(trimmed)) return trimmed;
+  if (/^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}(\s*,\s*[\d.]+)?\s*\)$/.test(trimmed)) return trimmed;
+  return DEFAULT_AO_COLOR;
+};
 const isValidIconValue = (value = '') => {
   const trimmed = value.trim();
   if (!trimmed) return true;
@@ -155,7 +163,7 @@ const ROLE_LABEL = {
  * Colored by company AO identity. Online dot at top-right corner.
  */
 const buildUserPinSvg = ({ color, isOnline, operationalRole }) => {
-  const c = color || DEFAULT_AO_COLOR;
+  const c = sanitizeColor(color);
   const roleMarkup = ROLE_ICON[operationalRole] ?? `
     <circle cx="19" cy="14" r="5.5" fill="white" fill-opacity="0.95"/>
     <path d="M7 29 C7 21 31 21 31 29" fill="white" fill-opacity="0.95"/>`;
@@ -183,7 +191,7 @@ const buildUserPinSvg = ({ color, isOnline, operationalRole }) => {
  * Visually distinct from other-user markers.
  */
 const buildSelfDotSvg = ({ color }) => {
-  const c = color || DEFAULT_AO_COLOR;
+  const c = sanitizeColor(color);
   return `<svg width="32" height="32" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
   <circle cx="24" cy="24" r="23" fill="${c}" fill-opacity="0.12"/>
   <circle cx="24" cy="24" r="17" fill="${c}" fill-opacity="0.25"/>
@@ -199,13 +207,14 @@ const buildSelfDotSvg = ({ color }) => {
  * Unchanged — keeps text/emoji icon support for AO overlays.
  */
 const buildAoPinSvg = ({ color, icon, iconUrl }) => {
+  const safeColor = sanitizeColor(color);
   const iconMarkup = iconUrl
     ? `<image href="${iconUrl}" x="7" y="5" width="10" height="10"/>`
     : icon
       ? `<text x="12" y="11" text-anchor="middle" dominant-baseline="middle" font-size="6" fill="#ffffff" font-family="Segoe UI, Arial, sans-serif">${escapeXml(icon)}</text>`
       : `<circle cx="12" cy="10" r="2.5" fill="#ffffff"/>`;
   return `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M12 2C8 13 2 20 2 20C2 20 12 20 20 20C20 20 16 13 12 2Z" fill="${color}"/>
+  <path d="M12 2C8 13 2 20 2 20C2 20 12 20 20 20C20 20 16 13 12 2Z" fill="${safeColor}"/>
   <circle cx="12" cy="10" r="4.5" fill="rgba(0,0,0,0.35)"/>
   ${iconMarkup}
 </svg>`;
@@ -759,12 +768,12 @@ const Dashboard = () => {
       setRealtimeNotice('Live updates are unavailable. Using HTTP fallback.');
     };
 
-    const handleAuthError = () => {
+    const handleAuthError = async () => {
       setRealtimeStatus('offline');
       setRealtimeEnabled(false);
       setRealtimeNoticeTone('error');
       setRealtimeNotice('Session expired. Redirecting to login...');
-      authService.logout();
+      await authService.logout();
       navigate('/login', {
         replace: true,
         state: {
@@ -782,10 +791,8 @@ const Dashboard = () => {
     socketService.on('auth_error', handleAuthError);
 
     const initSocket = async () => {
-      const token = localStorage.getItem('token');
-      if (token) {
-        try {
-          await socketService.connect(token);
+      try {
+          await socketService.connect(null);
           setRealtimeEnabled(true);
           setRealtimeStatus('connected');
           socketInitializedRef.current = true;
@@ -803,7 +810,6 @@ const Dashboard = () => {
           setRealtimeEnabled(false);
           setRealtimeStatus('offline');
         }
-      }
     };
 
     initSocket();
@@ -1158,50 +1164,54 @@ const Dashboard = () => {
     }
   };
 
-  const handleAOCreate = (event) => {
-    if (!event?.layer) {
-      return;
-    }
+  // Keep a ref to visibleCompanies so handleAOCreate can read the latest value
+  // without changing its own reference (which would re-trigger EditControl's effect).
+  const visibleCompaniesRef = useRef(visibleCompanies);
+  visibleCompaniesRef.current = visibleCompanies;
+
+  // react-leaflet-draw v0.20 registers anonymous wrapper handlers for every
+  // draw:* event and has a broken cleanup that never removes those wrappers.
+  // Its useEffect re-fires whenever onCreated/onEdited/onDeleted change reference.
+  // If these callbacks are plain `const` functions they change on every Dashboard
+  // re-render, causing wrappers to accumulate. After N re-renders, a single
+  // draw:deleted fires handleAODelete N times → 1 success + (N-1) × 404.
+  // Fix: useCallback with stable/minimal deps so the effect fires only once.
+
+  const handleAOCreate = useCallback((event) => {
+    if (!event?.layer) return;
 
     const polygon = toGeoPolygon(event.layer.getLatLngs());
-    if (!polygon) {
-      return;
-    }
+    if (!polygon) return;
 
-    setAoDraft({
-      polygon,
-      layer: event.layer
-    });
+    // Read latest user/companies via ref/service so deps stay empty.
+    const user = authService.getCurrentUser();
+    const firstCompanyId = visibleCompaniesRef.current[0]?._id || '';
+
+    setAoDraft({ polygon, layer: event.layer });
     setAoForm({
       name: '',
       color: DEFAULT_AO_COLOR,
       icon: '',
       pattern: '',
-      companyId: currentUser?.companyId || visibleCompanies[0]?._id || ''
+      companyId: user?.companyId || firstCompanyId
     });
     setAoIconError('');
     setAoNameError('');
     setAoModalMode('create');
     setAoError('');
-  };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleAOEdit = async (event) => {
-    if (!event?.layers) {
-      return;
-    }
+  const handleAOEdit = useCallback(async (event) => {
+    if (!event?.layers) return;
 
     const updates = [];
     event.layers.eachLayer((layer) => {
       const aoId = layer?.options?.aoId;
       const polygon = toGeoPolygon(layer.getLatLngs());
-      if (aoId && polygon) {
-        updates.push({ aoId, polygon });
-      }
+      if (aoId && polygon) updates.push({ aoId, polygon });
     });
 
-    if (!updates.length) {
-      return;
-    }
+    if (!updates.length) return;
 
     try {
       setAoSaving(true);
@@ -1219,24 +1229,19 @@ const Dashboard = () => {
     } finally {
       setAoSaving(false);
     }
-  };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleAODelete = async (event) => {
-    if (!event?.layers) {
-      return;
-    }
+  const handleAODelete = useCallback(async (event) => {
+    if (!event?.layers) return;
 
-    const aoIds = [];
+    const aoIdSet = new Set();
     event.layers.eachLayer((layer) => {
       const aoId = layer?.options?.aoId;
-      if (aoId) {
-        aoIds.push(aoId);
-      }
+      if (aoId) aoIdSet.add(aoId);
     });
+    const aoIds = [...aoIdSet];
 
-    if (!aoIds.length) {
-      return;
-    }
+    if (!aoIds.length) return;
 
     try {
       setAoSaving(true);
@@ -1262,7 +1267,7 @@ const Dashboard = () => {
     } finally {
       setAoSaving(false);
     }
-  };
+  }, [fetchAOs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAOSelect = (ao) => {
     if (!canManageAOs) {
@@ -1332,7 +1337,15 @@ const Dashboard = () => {
         const response = await aoService.createAO(payload);
         const createdAO = response?.ao;
         if (createdAO) {
-          setAos((prev) => [createdAO, ...prev]);
+          // Upsert: the socket ao:created broadcast may arrive before this REST
+          // response (persistent connection vs HTTP round-trip), so guard against
+          // adding a duplicate if the socket already inserted it.
+          setAos((prev) => {
+            const exists = prev.some((ao) => ao._id === createdAO._id);
+            return exists
+              ? prev.map((ao) => ao._id === createdAO._id ? createdAO : ao)
+              : [createdAO, ...prev];
+          });
         }
         clearDraftLayer();
         setAoDraft(null);
