@@ -80,7 +80,7 @@ const Register = () => {
         password: formData.password,
         inviteToken
       });
-      login(response.token, response.user);
+      login(response.user);
       navigate('/dashboard');
     } catch (error) {
       const message = error.response?.data?.error?.message || 'Registration failed';

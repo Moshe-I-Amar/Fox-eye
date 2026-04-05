@@ -7,26 +7,20 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [authReady, setAuthReady] = useState(false);
 
-  // Bootstrap: re-validate stored token against the server on mount.
-  // Keeps localStorage in sync with server truth (deactivated accounts, etc.)
+  // Bootstrap: validate session cookie against the server on mount.
+  // If the HttpOnly cookie is present and valid, the server returns the user.
   useEffect(() => {
     let isActive = true;
-    const token = localStorage.getItem('token');
-
-    if (!token) {
-      setAuthReady(true);
-      return () => { isActive = false; };
-    }
 
     authService.getMe()
       .then((data) => {
         if (!isActive) return;
-        authService.setAuthData(token, data.user);
+        authService.setAuthData(null, data.user);
         setUser(data.user);
       })
       .catch(() => {
         if (!isActive) return;
-        authService.logout();
+        localStorage.removeItem('user');
         setUser(null);
       })
       .finally(() => {
@@ -36,13 +30,13 @@ export const AuthProvider = ({ children }) => {
     return () => { isActive = false; };
   }, []);
 
-  const login = (token, userData) => {
-    authService.setAuthData(token, userData);
+  const login = (userData) => {
+    authService.setAuthData(null, userData);
     setUser(userData);
   };
 
-  const logout = () => {
-    authService.logout();
+  const logout = async () => {
+    await authService.logout();
     setUser(null);
   };
 

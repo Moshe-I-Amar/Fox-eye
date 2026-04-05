@@ -1,7 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import Badge from '../../components/ui/Badge';
 import Button from '../../components/ui/Button';
-import useFieldEvents from '../../hooks/useFieldEvents';
 import { eventApi } from '../../services/eventApi';
 
 const TYPE_CONFIG = {
@@ -29,24 +28,50 @@ const formatTime = (iso) => {
       ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
 
+const hasValidCoords = (ev) => {
+  const c = ev.coordinates?.coordinates;
+  return Array.isArray(c) && c.length === 2 &&
+    Number.isFinite(c[0]) && Number.isFinite(c[1]);
+};
+
 /**
  * MobileEventFeed — live field events list.
  *
+ * Events are provided by the parent (MobileFieldView) via useFieldEvents so
+ * the map and feed share one data source without double-fetching.
+ *
  * Props:
- *   limit  {number}  — max events to show (default: 20)
+ *   events        {FieldEvent[]}  — pre-fetched list (from parent)
+ *   loading       {boolean}
+ *   error         {string}
+ *   refetch       {fn}
+ *   onShowOnMap   {fn(coords: [lng, lat])}  — switch to map tab and fly to coords
+ *   onEventUpdate {fn(id, patch)}           — optimistic local state update
  */
-const MobileEventFeed = ({ limit = 20 }) => {
-  const { events, loading, error, refetch } = useFieldEvents(limit);
+const MobileEventFeed = ({
+  events = [],
+  loading = false,
+  error = '',
+  refetch,
+  onShowOnMap,
+  onEventUpdate
+}) => {
   const [respondingIds, setRespondingIds] = useState(new Set());
 
   const respond = useCallback(async (id, action) => {
     setRespondingIds((prev) => new Set([...prev, id]));
+    // Optimistic: update status immediately so the button/badge reflects the
+    // new state without waiting for the socket round-trip.
+    const optimisticStatus = action === 'acknowledge' ? 'ACKNOWLEDGED' : 'RESOLVED';
+    onEventUpdate?.(id, { status: optimisticStatus });
     try {
       await (action === 'acknowledge'
         ? eventApi.acknowledgeEvent(id)
         : eventApi.resolveEvent(id));
+      // Socket will broadcast the confirmed update; useFieldEvents merges it.
     } catch {
-      // socket resync will correct state
+      // Revert optimistic update on failure — socket won't fire, so re-fetch
+      refetch?.();
     } finally {
       setRespondingIds((prev) => {
         const next = new Set(prev);
@@ -54,7 +79,7 @@ const MobileEventFeed = ({ limit = 20 }) => {
         return next;
       });
     }
-  }, []);
+  }, [onEventUpdate, refetch]);
 
   const activeCount = events.filter((e) => e.status === 'ACTIVE').length;
 
@@ -111,6 +136,12 @@ const MobileEventFeed = ({ limit = 20 }) => {
           const isPending = respondingIds.has(event._id);
           const canAck    = event.status === 'ACTIVE';
           const canResolve = event.status === 'ACTIVE' || event.status === 'ACKNOWLEDGED';
+          const showMapBtn = !!onShowOnMap && hasValidCoords(event);
+
+          const senderName = event.senderId?.name || 'Unknown';
+          const senderRole = event.senderId?.operationalRole
+            ? event.senderId.operationalRole.replace(/_/g, ' ')
+            : null;
 
           return (
             <div
@@ -124,7 +155,10 @@ const MobileEventFeed = ({ limit = 20 }) => {
                     <Badge variant={statusCfg.variant} size="sm">{statusCfg.label}</Badge>
                   </div>
                   <div className="text-xs text-gold/70 truncate">
-                    {event.senderId?.name || 'Unknown'} · {typeCfg.sublabel}
+                    {senderName}
+                    {senderRole && (
+                      <span className="text-gold/40"> · {senderRole}</span>
+                    )}
                   </div>
                   {event.acknowledgedBy && (
                     <div className="text-[10px] text-gold/40 mt-0.5">
@@ -132,10 +166,26 @@ const MobileEventFeed = ({ limit = 20 }) => {
                     </div>
                   )}
                 </div>
-                <div className="text-[10px] text-gold/40 whitespace-nowrap pt-0.5 shrink-0">
-                  {formatTime(event.createdAt)}
+
+                <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                  {/* Show on map — flies to the event location */}
+                  {showMapBtn && (
+                    <button
+                      type="button"
+                      onClick={() => onShowOnMap(event.coordinates.coordinates)}
+                      aria-label="Show on map"
+                      title="Show on map"
+                      className="text-gold/40 hover:text-gold transition-colors text-base leading-none"
+                    >
+                      ◎
+                    </button>
+                  )}
+                  <div className="text-[10px] text-gold/40 whitespace-nowrap">
+                    {formatTime(event.createdAt)}
+                  </div>
                 </div>
               </div>
+
               {(canAck || canResolve) && (
                 <div className="flex gap-2 mt-2.5">
                   {canAck && (

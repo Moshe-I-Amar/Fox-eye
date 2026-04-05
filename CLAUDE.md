@@ -18,8 +18,9 @@ fox-eye/
 ### Stack
 - Node.js, **CommonJS** (`require`/`module.exports` — never use `import/export`)
 - Express 4.x, Mongoose 8.x, Socket.IO 4.x
-- JWT auth (jsonwebtoken + bcryptjs), express-validator, helmet, express-rate-limit
+- JWT auth (jsonwebtoken + bcryptjs), express-validator, helmet, express-rate-limit, **cookie-parser**
 - **web-push** — VAPID-based Web Push notifications (requires `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` env vars)
+- **HttpOnly session cookie** — JWT issued as `HttpOnly; Secure; SameSite=Strict` cookie on login/register; `POST /api/auth/logout` clears it server-side
 
 ### Patterns — always follow these
 ```js
@@ -59,7 +60,7 @@ await logAdminAction({ action: 'invite.create', actorUserId, targetType: 'invite
 |------|---------|
 | `src/app.js` | Express bootstrap, middleware, route mounting, request logging with token scrubbing |
 | `src/config/db.js` | MongoDB connection with retry |
-| `src/middleware/auth.js` | `auth`, `requireRole`, `requireOperationalRole` — also checks user.status/active |
+| `src/middleware/auth.js` | `auth`, `requireRole`, `requireOperationalRole` — reads token from `req.cookies.token` first, falls back to `Authorization: Bearer` header |
 | `src/middleware/authorize.js` | `assertRoleEditAuthority`, `assertCompanyAccess`, `OPERATIONAL_ROLE_RANK`, `requireAdminOrCompanyCommander` |
 | `src/middleware/errorHandler.js` | Global error handler |
 | `src/utils/errors.js` | `AppError` class |
@@ -124,8 +125,9 @@ Registration is invite-gated. Flow: admin creates invite → shares link → use
 ### API endpoints
 ```
 Auth (rate limited: 5/15min for login/register, 20/15min for invite):
-  POST   /api/auth/register            # Invite-gated registration (inviteToken required)
-  POST   /api/auth/login               # Email/password login
+  POST   /api/auth/register            # Invite-gated registration; sets HttpOnly session cookie
+  POST   /api/auth/login               # Email/password login; sets HttpOnly session cookie
+  POST   /api/auth/logout              # Clears session cookie (no auth required)
   GET    /api/auth/me                  # Current user profile (auth required)
   GET    /api/auth/invite/:token       # Validate invite token (public)
 
@@ -196,8 +198,8 @@ Socket connect now accepts optional session type: `socketService.connect(token, 
 - Vite 5 + **vite-plugin-pwa** (`injectManifest` strategy) — custom `src/sw.js` service worker with Workbox caching + Web Push handler; generated as `dist/sw.js`
 - Tailwind CSS 3.x with custom dark theme
 - Leaflet 1.9 + react-leaflet 4.x + leaflet-draw
-- Axios with JWT interceptors via `services/api.js`
-- Socket.IO client via `services/socketService.js`
+- Axios with `withCredentials: true` (session cookie sent automatically) via `services/api.js` — no `Authorization` header needed
+- Socket.IO client via `services/socketService.js` — connects with `withCredentials: true`; auth handled by session cookie in WS handshake
 - Use `import.meta.env.VITE_*` (never `process.env`)
 
 ### Auth context — always use this, never read localStorage directly
@@ -206,8 +208,8 @@ import { useAuth } from '../context/AuthContext';
 
 const { user, authReady, login, logout, isAuthenticated } = useAuth();
 // authReady = false while bootstrapping (show spinner, not redirect)
-// login(token, userData) — stores token and updates state
-// logout() — clears token and state
+// login(userData) — stores user in state; server cookie already set by login/register API call
+// logout() — async; calls POST /api/auth/logout to clear cookie server-side, then clears state
 ```
 `AuthProvider` wraps the entire app in `App.jsx`. `useAuth()` must be called inside `AuthProvider`.
 
@@ -262,15 +264,15 @@ components/ui/NotificationPrompt.jsx  — inline push-notification opt-in/opt-ou
 | `src/services/eventApi.js` | `createEvent()`, `getEvents()`, `acknowledgeEvent()`, `resolveEvent()` |
 | `src/services/socketService.js` | Socket.IO client singleton; `connect(token, { sessionType })` |
 | `src/services/pushService.js` | Client push helpers: `subscribeToPush()`, `unsubscribeFromPush()`, `getSubscription()`, `requestNotificationPermission()` |
-| `src/hooks/useFieldEvents.js` | Fetch + live socket subscription for field events; returns `{ events, loading, error, refetch }` |
+| `src/hooks/useFieldEvents.js` | Fetch + live socket subscription for field events; returns `{ events, loading, error, refetch, updateEvent }`; `updateEvent(id, patch)` applies optimistic local update; socket ACK/RESOLVE handlers merge onto existing entry to preserve populated `senderId` |
 | `src/hooks/useOfflineQueue.js` | Persist + flush field events queued while offline; returns `{ queue, enqueue, flush }` — backed by `localStorage` |
 | `src/hooks/useNotifications.js` | Push notification state — `{ supported, permission, subscribed, loading, error, enable, disable }` |
 | `src/sw.js` | Custom service worker source (injectManifest mode) — Workbox precache + runtime caching + `push` event handler + `notificationclick` handler |
-| `src/pages/mobile/MobileFieldView.jsx` | Mobile page — GPS watcher, socket MOBILE session, Wake Lock, network-status detection, offline queue flush; route `/mobile` |
+| `src/pages/mobile/MobileFieldView.jsx` | Mobile page — GPS watcher, socket MOBILE session, Wake Lock, network-status detection, offline queue flush; owns `useFieldEvents(25)` and passes shared events to both `MobileFieldMap` (markers) and `MobileEventFeed` (list); handles `handleShowOnMap(coords)` to switch to map tab and fly to event coords; route `/mobile` |
 | `src/pages/mobile/MobileLayout.jsx` | Mobile shell — `100dvh`, bottom nav (mobile) / sidebar (md+), safe-area padding; props: `connectionStatus`, `gpsStatus`, `wakeLockStatus`, `onBack` |
 | `src/pages/mobile/PanicPanel.jsx` | Three tactile panic buttons (INJURED/AMBUSH/LINK_UP); haptic on press/send; props: `userCoordinates`, `disabled`, `onQueueEvent`, `queuedCount`; offline sends via `onQueueEvent` — never disable based on socket state |
-| `src/pages/mobile/MobileFieldMap.jsx` | Hierarchy-scoped Leaflet map; props: `userCoordinates`, `initialZoom`, `showZoomControl`; includes center-on-me FAB |
-| `src/pages/mobile/MobileEventFeed.jsx` | Live field events list with refresh + active count + inline ACK/RESOLVE buttons per event; prop: `limit` |
+| `src/pages/mobile/MobileFieldMap.jsx` | Hierarchy-scoped Leaflet map; props: `userCoordinates`, `events`, `focusCoords`, `onFocusConsumed`, `initialZoom`, `showZoomControl`; renders field event markers (same SVG icon style as Dashboard) + pulse on ACTIVE; flies to `focusCoords` ([lng,lat]) when set, then calls `onFocusConsumed`; includes center-on-me FAB |
+| `src/pages/mobile/MobileEventFeed.jsx` | Live field events list; props: `events`, `loading`, `error`, `refetch`, `onShowOnMap`, `onEventUpdate`; shows sender name + operationalRole; "show on map" (◎) button per event with valid coords; ACK/RESOLVE apply optimistic update via `onEventUpdate` before socket confirms |
 
 ### Map patterns
 - `MapContainer` parent div must have explicit height (`h-screen`, `h-[calc(...)]`, or `h-full` inside a flex container)
@@ -287,7 +289,9 @@ components/ui/NotificationPrompt.jsx  — inline push-notification opt-in/opt-ou
 | `useAuth` crash / context undefined | `useAuth()` called outside `<AuthProvider>` — check component tree in App.jsx |
 | Register shows "Invite Required" modal | No `?token=` in URL — must use invite link |
 | 403 AUTH_PENDING on login | `user.status === 'pending'` in DB — account not yet activated |
-| Socket 401 after login | JWT not passed in socket handshake `auth` field |
+| Socket 401 after login | Session cookie not present or expired — ensure `withCredentials: true` on socket connect and CORS `credentials: true` on server |
+| Login redirects to `/login?reason=session-expired` immediately | `AuthContext` bootstrap `getMe()` 401 is triggering the interceptor — the 401 interceptor must skip `/api/auth/me` calls (see `api.js`) |
+| Server crashes on startup with "invalid directive value for connect-src" | `CLIENT_ORIGIN` env var contains comma-separated origins — CSP builder must `.split(',')` and spread them individually |
 | AO breach false positives | `AO_BREACH_GRACE_MS` env var too low |
 | Wrong marker position | Coordinate swap — passing `[lng, lat]` to Leaflet |
 | Map invisible / zero height | Missing height on `MapContainer` parent div |
@@ -306,6 +310,28 @@ components/ui/NotificationPrompt.jsx  — inline push-notification opt-in/opt-ou
 | Field event markers not showing on map | `ev.coordinates.coordinates` is `[lng, lat]` (GeoJSON) — Leaflet needs `[lat, lng]`; also check that `useFieldEvents` is mounted and events have valid coords |
 
 ---
+
+## Security Architecture
+
+### Auth: HttpOnly Cookie (not localStorage)
+- Login/register set `token` as `HttpOnly; Secure; SameSite=Strict` cookie — JWT is never accessible to JavaScript
+- `POST /api/auth/logout` clears the cookie server-side (browser sends cookie, server sets `Max-Age=0`)
+- `auth.js` middleware reads `req.cookies.token` first, falls back to `Authorization: Bearer` for tooling
+- Socket.IO auth reads the cookie from `socket.handshake.headers.cookie` via `parseCookieToken()` in `socketAuth.js`
+- Client: axios uses `withCredentials: true`; no `Authorization` header interceptor; `socketService.connect()` uses `withCredentials: true`
+
+### Content Security Policy
+Helmet is configured with an explicit CSP in `server/src/app.js`:
+- `script-src 'self'` — no inline scripts, no foreign script loads
+- `style-src 'self' 'unsafe-inline'` — Leaflet requires inline styles
+- `img-src` — `data:`, `blob:`, and OpenStreetMap tile origins explicitly allowlisted
+- `connect-src` — API server + WebSocket origins derived from `CLIENT_ORIGIN` env var
+- **`CLIENT_ORIGIN` is comma-separated** — always `.split(',')` before spreading into CSP directives; passing the raw string crashes Helmet
+
+### SVG Injection Prevention
+Map marker SVGs interpolate colors from DB (company color field). Two defenses in `Dashboard.jsx`:
+- `sanitizeColor(value)` — strict hex (`#abc` / `#aabbcc`) and `rgb()`/`rgba()` allowlist; falls back to `DEFAULT_AO_COLOR`
+- `isImageUrl(value)` — explicitly blocks `data:image/svg+xml` to prevent SVG-in-SVG script execution; allows `data:image/<non-svg>`, `https://`, `blob:`, `/path`
 
 ## Dev Commands
 ```bash

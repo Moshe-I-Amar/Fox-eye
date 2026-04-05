@@ -21,7 +21,58 @@ const TEAMMATE_ICON = new L.Icon({
   popupAnchor: [0, -28]
 });
 
-const MapController = ({ center, triggerFly }) => {
+// ── Field-event marker icons ──────────────────────────────────────────────────
+// Mirrors the icon approach in Dashboard so mobile and desktop show identical markers.
+
+const svgToDataUrl = (svg) => `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+
+const EVENT_MARKER_CONFIG = {
+  INJURED: {
+    color: '#ef4444',
+    svgPath: `<path d="M19 11 L19 27 M11 19 L27 19" stroke="white" stroke-width="5" stroke-linecap="round"/>`
+  },
+  AMBUSH: {
+    color: '#f97316',
+    svgPath: `<path d="M19 11 L19 23" stroke="white" stroke-width="4.5" stroke-linecap="round"/><circle cx="19" cy="28.5" r="2.8" fill="white"/>`
+  },
+  LINK_UP: {
+    color: '#3b82f6',
+    svgPath: `<path d="M10 19 L19 10 L28 19 M19 10 L19 27" stroke="white" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`
+  },
+};
+
+const EVENT_STATUS_OPACITY = { ACTIVE: 1, ACKNOWLEDGED: 0.7, RESOLVED: 0.4 };
+const EVENT_TYPE_LABELS    = { INJURED: 'Injured', AMBUSH: 'Ambush', LINK_UP: 'Link Up' };
+
+const buildEventMarkerSvg = (eventType, status) => {
+  const cfg = EVENT_MARKER_CONFIG[eventType] || { color: '#6b7280', svgPath: '' };
+  return `<svg width="28" height="36" viewBox="0 0 38 48" fill="none" xmlns="http://www.w3.org/2000/svg" style="opacity:${EVENT_STATUS_OPACITY[status] ?? 0.4}">
+  <defs><filter id="evs" x="-30%" y="-20%" width="160%" height="160%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="rgba(0,0,0,0.6)"/></filter></defs>
+  <path d="M19 2 C9 2 1 10 1 20 C1 30 19 46 19 46 C19 46 37 30 37 20 C37 10 29 2 19 2Z" fill="${cfg.color}" filter="url(#evs)"/>
+  <circle cx="19" cy="19" r="13" fill="rgba(0,0,0,0.25)"/>
+  ${cfg.svgPath}
+</svg>`;
+};
+
+// Cache icons by type+status to avoid recreating Leaflet Icon objects on every render
+const eventIconCache = new Map();
+const getEventIcon = (eventType, status) => {
+  const key = `${eventType}:${status}`;
+  if (!eventIconCache.has(key)) {
+    eventIconCache.set(key, new L.Icon({
+      iconUrl:     svgToDataUrl(buildEventMarkerSvg(eventType, status)),
+      iconSize:    [28, 36],
+      iconAnchor:  [14, 35],
+      popupAnchor: [0, -36],
+      className:   status === 'ACTIVE' ? 'event-marker-active' : '',
+    }));
+  }
+  return eventIconCache.get(key);
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MapController = ({ center, triggerFly, focusCoords, onFocusConsumed }) => {
   const map = useMap();
   // hasCenteredRef: ensures we fly to the user's real GPS position exactly once,
   // automatically, on first lock — without requiring a button press.
@@ -30,8 +81,6 @@ const MapController = ({ center, triggerFly }) => {
   const hasCenteredRef = useRef(false);
 
   // Initial size + delayed fallback.
-  // The flex/absolute layout on mobile may not be fully settled when this first
-  // fires, so a second call at 300 ms catches any residual 0-px computation.
   useEffect(() => {
     map.invalidateSize();
     const t = setTimeout(() => map.invalidateSize(), 300);
@@ -39,8 +88,7 @@ const MapController = ({ center, triggerFly }) => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-center once on first valid GPS fix — silent snap, no animation,
-  // so the map doesn't jolt while GPS is still settling.
+  // Auto-center once on first valid GPS fix
   useEffect(() => {
     if (!isValidCoords(center) || hasCenteredRef.current) return;
     hasCenteredRef.current = true;
@@ -48,30 +96,42 @@ const MapController = ({ center, triggerFly }) => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [center]);
 
-  // Animated fly triggered by the user pressing the center-on-me FAB.
+  // Animated fly triggered by the user pressing the center-on-me FAB
   useEffect(() => {
     if (!isValidCoords(center)) return;
     map.flyTo(center, map.getZoom(), { animate: true, duration: 0.8 });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerFly]);
 
+  // External focus: fly to an event location from the feed "Show on map" button.
+  // focusCoords is [lng, lat] (GeoJSON order); convert to Leaflet [lat, lng].
+  useEffect(() => {
+    if (!Array.isArray(focusCoords) || focusCoords.length !== 2) return;
+    map.flyTo([focusCoords[1], focusCoords[0]], 16, { animate: true, duration: 0.8 });
+    onFocusConsumed?.();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusCoords]);
+
   return null;
 };
 
 /**
  * MobileFieldMap — full-screen tactical map; always the base layer of MobileLayout.
- * Sits at z-0 within the layout container so floating chrome (header, nav, sheet)
- * naturally renders above it.
  *
  * Props:
  *   userCoordinates  {[lng, lat] | null}  — own GPS position (GeoJSON order)
+ *   events           {FieldEvent[]}       — field events to show as map markers
+ *   focusCoords      {[lng, lat] | null}  — fly to this position (GeoJSON order) when set
+ *   onFocusConsumed  {fn}                 — called after focusCoords is consumed (clear it)
  *   initialZoom      {number}             — override default zoom
  *   showZoomControl  {boolean}            — show Leaflet zoom buttons
- *   gpsStatus        {string}             — 'locked' | 'searching' | 'unavailable';
- *                                           drives the permission-denied overlay
+ *   gpsStatus        {string}             — 'locked' | 'searching' | 'unavailable'
  */
 const MobileFieldMap = ({
   userCoordinates,
+  events = [],
+  focusCoords = null,
+  onFocusConsumed,
   initialZoom = DEFAULT_MAP_ZOOM,
   showZoomControl = false,
   gpsStatus = 'searching'
@@ -123,6 +183,13 @@ const MobileFieldMap = ({
 
   const onlineCount = teammates.filter((t) => t.isOnline).length;
 
+  // Pre-filter events to only those with valid GeoJSON coordinates
+  const visibleEvents = events.filter((ev) => {
+    const c = ev.coordinates?.coordinates;
+    return Array.isArray(c) && c.length === 2 &&
+      Number.isFinite(c[0]) && Number.isFinite(c[1]);
+  });
+
   return (
     /*
      * `absolute inset-0 z-0` fills the parent (MobileLayout's relative root, 100dvh)
@@ -138,7 +205,7 @@ const MobileFieldMap = ({
         <div className="absolute inset-x-4 z-[100]
           flex flex-col gap-2 rounded-xl border border-red-500/40
           bg-jet/95 backdrop-blur-sm p-4 shadow-[0_0_24px_rgba(239,68,68,0.2)]"
-          style={{ top: 'calc(3.5rem + 0.75rem)' }}   // clears the floating header
+          style={{ top: 'calc(3.5rem + 0.75rem)' }}
         >
           <div className="flex items-center gap-2 text-red-400 font-semibold text-sm tracking-wide">
             <span className="text-base leading-none">⊗</span>
@@ -201,7 +268,12 @@ const MobileFieldMap = ({
 
           {showZoomControl && <ZoomControl position="bottomleft" />}
 
-          <MapController center={center} triggerFly={flyTrigger} />
+          <MapController
+            center={center}
+            triggerFly={flyTrigger}
+            focusCoords={focusCoords}
+            onFocusConsumed={onFocusConsumed}
+          />
 
           {/* Own position marker */}
           {isValidCoords(userCoordinates) && (
@@ -233,6 +305,33 @@ const MobileFieldMap = ({
                     {teammate.isOnline && (
                       <div className="text-xs text-green-600 mt-0.5">● Online</div>
                     )}
+                  </div>
+                </Popup>
+              </Marker>
+            );
+          })}
+
+          {/* Field event markers — same icon style as desktop Dashboard */}
+          {visibleEvents.map((ev) => {
+            const [lng, lat] = ev.coordinates.coordinates;
+            const label = EVENT_TYPE_LABELS[ev.eventType] || ev.eventType;
+            return (
+              <Marker
+                key={ev._id}
+                position={[lat, lng]}
+                icon={getEventIcon(ev.eventType, ev.status)}
+                zIndexOffset={ev.status === 'ACTIVE' ? 500 : 0}
+              >
+                <Popup>
+                  <div className="text-sm">
+                    <div className="font-bold">{label}</div>
+                    <div className="text-xs opacity-70">
+                      {ev.senderId?.name || 'Unknown'}
+                      {ev.senderId?.operationalRole
+                        ? ` · ${ev.senderId.operationalRole.replace(/_/g, ' ')}`
+                        : ''}
+                    </div>
+                    <div className="text-xs mt-0.5 opacity-60">{ev.status}</div>
                   </div>
                 </Popup>
               </Marker>

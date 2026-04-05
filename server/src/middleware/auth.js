@@ -5,7 +5,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const { AppError } = require('../utils/errors');
 
 const auth = asyncHandler(async (req, res, next) => {
-  const token = req.header('Authorization')?.replace('Bearer ', '');
+  const token = req.cookies?.token || req.header('Authorization')?.replace('Bearer ', '');
 
   if (!token) {
     throw new AppError('AUTH_REQUIRED', 'Access denied. No token provided.', 401);

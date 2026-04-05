@@ -7,7 +7,8 @@ import socketService from '../services/socketService';
  *
  * @param {number} [limit=20]  — max records per fetch
  *
- * Returns { events, loading, error, refetch }
+ * Returns { events, loading, error, refetch, updateEvent }
+ * updateEvent(id, patch) — optimistic local update before socket arrives
  */
 const useFieldEvents = (limit = 20) => {
   const [events, setEvents] = useState([]);
@@ -35,11 +36,17 @@ const useFieldEvents = (limit = 20) => {
     const onNew = ({ event }) =>
       setEvents((prev) => [event, ...prev].slice(0, limit));
 
+    // Merge onto existing entry to preserve populated fields (e.g. senderId.name)
+    // that aren't re-populated in the ACK/RESOLVE broadcast.
     const onAck = ({ event }) =>
-      setEvents((prev) => prev.map((e) => (e._id === event._id ? event : e)));
+      setEvents((prev) => prev.map((e) =>
+        e._id === event._id ? { ...event, senderId: e.senderId ?? event.senderId } : e
+      ));
 
     const onResolved = ({ event }) =>
-      setEvents((prev) => prev.map((e) => (e._id === event._id ? event : e)));
+      setEvents((prev) => prev.map((e) =>
+        e._id === event._id ? { ...event, senderId: e.senderId ?? event.senderId } : e
+      ));
 
     socketService.on('field:event:new',          onNew);
     socketService.on('field:event:acknowledged', onAck);
@@ -52,7 +59,11 @@ const useFieldEvents = (limit = 20) => {
     };
   }, [limit]);
 
-  return { events, loading, error, refetch };
+  const updateEvent = useCallback((id, patch) => {
+    setEvents((prev) => prev.map((e) => e._id === id ? { ...e, ...patch } : e));
+  }, []);
+
+  return { events, loading, error, refetch, updateEvent };
 };
 
 export default useFieldEvents;

@@ -87,7 +87,7 @@ const Login = () => {
 
     try {
       const response = await authService.login(formData);
-      login(response.token, response.user);
+      login(response.user);
       navigate(from, { replace: true });
     } catch (error) {
       const code = error.response?.data?.error?.code;

@@ -13,7 +13,7 @@ class SocketService {
     this.viewportCooldownMs = 250;
   }
 
-  connect(token, { sessionType = 'WEB' } = {}) {
+  connect(_token, { sessionType = 'WEB' } = {}) {
     if (this.socket && this.socket.connected) {
       return Promise.resolve(this.socket);
     }
@@ -24,9 +24,7 @@ class SocketService {
         
         this.authFailed = false;
         this.socket = io(serverUrl, {
-          auth: {
-            token: token
-          },
+          withCredentials: true,
           query: { sessionType },
           transports: ['websocket', 'polling'],
           timeout: 20000,

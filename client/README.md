@@ -1,180 +1,153 @@
-# GeoMap Client
+# Fox-Eye
 
-A luxury React frontend for geolocation-based user mapping with dark theme and gold accents.
+A real-time operational tracking and geofencing platform for hierarchical military-style organizations. Users share live GPS location on an interactive map; commanders define Areas of Operations (AOs) as geofenced polygons; the system detects boundary breaches and fires real-time alerts and push notifications.
+
+---
 
 ## Features
 
-- Luxury dark theme UI with gold accents
-- Interactive map showing user locations
-- **Real-time WebSocket connections with JWT authentication**
-- **Live location updates and user presence tracking**
-- User authentication with JWT
-- Role-based access control (admin panel)
-- Responsive design with Tailwind CSS
-- Glass morphism effects and smooth animations
+- **Live map** — Leaflet map with role-colored user markers, online/offline indicators, and AO polygon overlays
+- **Real-time engine** — Socket.IO presence tracking, live location updates, and field event broadcasts
+- **Field events** — INJURED / AMBUSH / LINK_UP panic reporting with Web Push notifications and in-app alerts
+- **Geofencing** — AO breach detection with configurable grace period and cooldown
+- **Invite-gated registration** — Admin-issued single-use tokens with pre-assigned role and hierarchy
+- **Progressive Web App** — Installable, offline-capable with service worker and background push support
+- **Mobile view** — Dedicated `/mobile` route with GPS watcher, Wake Lock, offline event queue, and full-screen map
+- **Secure auth** — HttpOnly `SameSite=Strict` session cookie (no localStorage token exposure); CSP enforced server-side
+- **Role-based access** — Hierarchical operational roles (HQ → Unit → Company → Team → Squad)
+- **Admin panel** — User management, hierarchy CRUD, invite lifecycle, and audit log
+
+---
 
 ## Tech Stack
 
-- **React 18** - UI framework
-- **Vite** - Build tool and dev server
-- **Tailwind CSS** - Styling framework
-- **React Router** - Client-side routing
-- **Axios** - HTTP client
-- **Socket.io Client** - Real-time WebSocket connections
-- **Leaflet + React-Leaflet** - Interactive maps
-- **React Hook Form** - Form management
+### Client
+- **React 18** + Vite 5 + Tailwind CSS 3
+- **Leaflet** 1.9 + react-leaflet 4 + leaflet-draw
+- **Socket.IO client** — real-time location, presence, and field events
+- **Axios** — `withCredentials: true`, automatic 401/403 redirect handling
+- **vite-plugin-pwa** (`injectManifest`) — custom service worker with Workbox + Web Push handler
+- React Router 6, React Hook Form
+
+### Server
+- **Node.js** + Express 4 + MongoDB (Mongoose 8) + Socket.IO 4
+- **cookie-parser** — HttpOnly session cookie parsing
+- **helmet** — CSP, HSTS, X-Frame-Options, and other security headers
+- **web-push** — VAPID Web Push notifications
+- JWT (jsonwebtoken + bcryptjs), express-validator, express-rate-limit
+
+---
+
+## Monorepo Structure
+
+```
+fox-eye/
+├── client/     React 18 + Vite + Tailwind + Leaflet (ESM)
+└── server/     Node.js + Express + MongoDB + Socket.IO (CommonJS)
+```
+
+---
 
 ## Setup
 
 ### Prerequisites
+- Node.js v18+
+- MongoDB instance (local or Atlas)
+- VAPID keys for push notifications: `npx web-push generate-vapid-keys`
 
-- Node.js (v16+)
-- GeoMap Server running on port 5000
+### Server
 
-### Installation
-
-1. Clone the repository
-2. Navigate to the client directory:
-   ```bash
-   cd client
-   ```
-
-3. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-4. Create environment variables:
-   ```bash
-   cp .env.example .env
-   ```
-
-5. Update `.env` with your server URL:
-   ```
-   VITE_API_URL=http://localhost:5000
-   ```
-
-### Running
-
-Development mode:
 ```bash
-npm run dev
+cd server
+npm install
+cp .env.example .env   # fill in values (see below)
+npm run dev            # nodemon on port 5000
 ```
 
-Build for production:
-```bash
-npm run build
+**Required `.env` values:**
+```
+PORT=5000
+MONGO_URI=mongodb://...
+JWT_SECRET=<strong-random-secret>
+JWT_EXPIRES_IN=1d
+CLIENT_ORIGIN=http://localhost:5173          # comma-separated for multiple origins
+NODE_ENV=development
+VAPID_PUBLIC_KEY=...
+VAPID_PRIVATE_KEY=...
+VAPID_SUBJECT=mailto:admin@yourapp.com
 ```
 
-Preview production build:
+### Client
+
 ```bash
-npm run preview
+cd client
+npm install
+cp .env.example .env
+# set VITE_API_URL=http://localhost:5000
+npm run dev            # Vite on port 5173
 ```
 
-The application will be available at `http://localhost:5173`
-
-## Pages & Features
-
-### Authentication
-- **Login** (`/login`) - User sign-in with email/password
-- **Register** (`/register`) - New user registration
-- Luxury glass morphism design with gold accents
-- Form validation and error handling
-
-### Dashboard (`/dashboard`)
-- Interactive map showing nearby users
-- **Real-time user presence with online/offline indicators**
-- **Live location updates from other users**
-- User list panel with search and filtering
-- "Use My Location" button for geolocation
-- Radius slider for distance filtering
-- User detail modals
-- WebSocket connection status indicators
-
-### Admin Panel (`/admin`)
-- Complete user management (admin only)
-- **Real-time monitoring of all user location updates**
-- **Live user presence tracking with online indicators**
-- Searchable user table
-- Pagination support
-- User detail views
-- Role management interface
-- Real-time connection status
-
-## UI Components
-
-### Luxury Design System
-- **Color Palette**: Jet black, charcoal, slate with gold accents
-- **Glass Cards**: Translucent panels with backdrop blur
-- **Gold Borders**: Gradient borders for premium feel
-- **Animations**: Smooth transitions and micro-interactions
-- **Typography**: Clean Inter font with proper hierarchy
-
-### Reusable Components
-- `Button` - Primary, secondary, outline, ghost variants
-- `Card` - Glass morphism with optional gold borders
-- `Input` - Dark theme inputs with gold focus states
-- `Modal` - Glass modal with blur backdrop
-- `Navbar` - Luxury navigation with user menu
-
-## Map Features
-
-- Dark theme map tiles from CartoDB
-- Custom gold location markers
-- **Real-time marker updates via WebSocket**
-- Interactive popups with user info
-- Distance calculations and display
-- Responsive map container
-- Geolocation integration
-- **Online/offline user indicators**
-- **Live presence tracking**
+---
 
 ## Authentication Flow
 
-1. User registers/logs in
-2. JWT token stored in localStorage
-3. Axios interceptor adds token to HTTP requests
-4. **Socket.io connection established with JWT token**
-5. Protected routes check authentication
-6. Admin routes verify role permissions
-7. Auto-logout on token expiration
-8. **Real-time events authenticated via WebSocket**
+1. User visits `/register?token=<invite>` — token pre-assigns role and hierarchy
+2. On login/register the server sets an **HttpOnly; Secure; SameSite=Strict** cookie — no token in the response body
+3. All subsequent API requests include the cookie automatically (`withCredentials: true`)
+4. Socket.IO reads the session cookie from the WebSocket handshake headers
+5. `AuthContext` bootstraps by calling `GET /api/auth/me` — succeeds if the cookie is valid, fails silently if not
+6. On logout, `POST /api/auth/logout` clears the cookie server-side before navigation
 
-## State Management
+---
 
-- React hooks for local state
-- localStorage for persistence
-- Axios interceptors for API calls
-- **Socket.io service for real-time state**
-- Context-free architecture (simple and scalable)
+## API Endpoints (summary)
 
-## Responsive Design
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/auth/login` | — | Login; sets HttpOnly cookie |
+| POST | `/api/auth/register` | — | Invite-gated registration; sets cookie |
+| POST | `/api/auth/logout` | — | Clears session cookie |
+| GET | `/api/auth/me` | cookie | Current user profile |
+| GET | `/api/auth/invite/:token` | — | Validate invite token |
+| GET | `/api/users/near` | cookie | Nearby users in scope |
+| PUT | `/api/users/me/location` | cookie | Update own GPS |
+| GET/POST | `/api/events` | cookie | Field events (rate-limited 10/hr POST) |
+| PATCH | `/api/events/:id/acknowledge` | cookie | ACK active event |
+| PATCH | `/api/events/:id/resolve` | cookie | Resolve event |
+| GET | `/api/push/vapid-public-key` | — | VAPID public key |
+| POST/DELETE | `/api/push/subscribe` | cookie | Manage push subscription |
+| GET/POST/PUT/DELETE | `/api/admin/*` | cookie + admin role | Full admin CRUD |
 
-- Mobile-first approach
-- Breakpoints: sm, md, lg, xl
-- Touch-friendly interactions
-- Adaptive layouts for all screen sizes
-- Optimized map display on mobile
+---
 
-## Performance Features
+## Socket Events
 
-- Lazy loading for map components
-- Optimized API calls with debouncing
-- Efficient re-renders with React.memo
-- Code splitting with Vite
-- Image optimization for markers
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `location:update` | client → server | GPS coordinate update |
+| `presence:subscribe` | client → server | Subscribe to online user list |
+| `field:event:new` | server → client | New field event broadcast |
+| `field:event:acknowledged` | server → client | Event ACK broadcast |
+| `field:event:resolved` | server → client | Event RESOLVE broadcast |
+| `ao:breach` | server → client | AO boundary breach alert |
+
+Connect with `{ withCredentials: true }` — auth is handled via the session cookie in the WS handshake.
+
+---
+
+## Security
+
+- **HttpOnly cookies** — JWT is inaccessible to JavaScript; eliminates localStorage XSS token theft
+- **SameSite=Strict** — CSRF protection without needing a separate CSRF token
+- **Content Security Policy** — `script-src 'self'` blocks inline and foreign scripts; Leaflet tile origins explicitly allowlisted
+- **SVG injection prevention** — map marker colors validated against a strict hex/rgb allowlist; `data:image/svg+xml` blocked from icon URLs
+- **Rate limiting** — 5 req/15min on auth endpoints, 10 req/hr per user on field event POST
+- **Invite-gated registration** — no self-signup; all accounts require admin-issued tokens
+
+---
 
 ## Browser Support
 
-- Chrome 90+
+- Chrome 90+ / Edge 90+
 - Firefox 88+
-- Safari 14+
-- Edge 90+
-
-## Development Notes
-
-- Uses Vite for fast development and optimized builds
-- Tailwind CSS for rapid styling with consistent design
-- Leaflet maps with dark theme customization
-- Component-based architecture for maintainability
-- Environment variables for configuration
+- Safari 14+ (PWA install supported on iOS 16.4+)

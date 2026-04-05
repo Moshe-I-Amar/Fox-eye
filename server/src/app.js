@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const http = require('http');
 const mongoose = require('mongoose');
@@ -25,11 +26,28 @@ const PORT = process.env.PORT || 5000;
 const createApp = () => {
   const app = express();
 
-  app.use(helmet());
-
   const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
-    .split(',')
-    .map((o) => o.trim());
+    .split(',').map((o) => o.trim()).filter(Boolean);
+  // Derive ws/wss equivalents for Socket.IO — replace http(s) scheme with ws(s)
+  const wsOrigins = allowedOrigins.map((o) => o.replace(/^https/, 'wss').replace(/^http/, 'ws'));
+  const cspDirectives = {
+    defaultSrc:     ["'self'"],
+    scriptSrc:      ["'self'"],
+    styleSrc:       ["'self'", "'unsafe-inline'"],
+    imgSrc:         ["'self'", "data:", "blob:", "https://tile.openstreetmap.org", "https://*.tile.openstreetmap.org"],
+    connectSrc:     ["'self'", ...allowedOrigins, ...wsOrigins],
+    fontSrc:        ["'self'"],
+    objectSrc:      ["'none'"],
+    frameAncestors: ["'none'"],
+  };
+  if (process.env.NODE_ENV === 'production') {
+    cspDirectives.upgradeInsecureRequests = [];
+  }
+  app.use(helmet({
+    contentSecurityPolicy: { directives: cspDirectives },
+    crossOriginEmbedderPolicy: false,
+  }));
+  app.use(cookieParser());
 
   const corsOptions = {
     origin: (origin, callback) => {

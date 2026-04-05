@@ -2,9 +2,20 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { resolveUserScope } = require('../services/scopeResolver');
 
+const parseCookieToken = (cookieHeader = '') => {
+  for (const part of cookieHeader.split(';')) {
+    const [key, ...val] = part.trim().split('=');
+    if (key.trim() === 'token') return decodeURIComponent(val.join('=').trim());
+  }
+  return null;
+};
+
 const authenticateSocket = async (socket, next) => {
   try {
-    const token = socket.handshake.auth.token || socket.handshake.headers.authorization?.replace('Bearer ', '');
+    const cookieToken = parseCookieToken(socket.handshake.headers.cookie || '');
+    const token = cookieToken
+      || socket.handshake.auth.token
+      || socket.handshake.headers.authorization?.replace('Bearer ', '');
     
     if (!token) {
       return next(new Error('Authentication error: No token provided'));

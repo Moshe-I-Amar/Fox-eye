@@ -16,30 +16,27 @@ export const authService = {
     return response.data.data;
   },
 
-  logout: () => {
-    localStorage.removeItem('token');
+  logout: async () => {
+    try {
+      await api.post('/api/auth/logout');
+    } catch (_) {
+      // best-effort — clear local state regardless
+    }
     localStorage.removeItem('user');
-  },
-
-  isAuthenticated: () => {
-    return !!localStorage.getItem('token');
   },
 
   getCurrentUser: () => {
     const userStr = localStorage.getItem('user');
-    if (!userStr) {
-      return null;
-    }
+    if (!userStr) return null;
     try {
       return JSON.parse(userStr);
-    } catch (error) {
+    } catch (_) {
       localStorage.removeItem('user');
       return null;
     }
   },
 
-  setAuthData: (token, user) => {
-    localStorage.setItem('token', token);
+  setAuthData: (_token, user) => {
     localStorage.setItem('user', JSON.stringify(user));
   },
 

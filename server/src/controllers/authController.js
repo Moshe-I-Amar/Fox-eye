@@ -61,10 +61,17 @@ const register = asyncHandler(async (req, res) => {
 
   const token = generateToken(user._id);
 
+  res.cookie('token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 24 * 60 * 60 * 1000,
+  });
+
   res.status(201).json({
     success: true,
     message: 'User registered successfully',
-    data: { user, token }
+    data: { user }
   });
 });
 
@@ -95,10 +102,17 @@ const login = asyncHandler(async (req, res) => {
 
   const token = generateToken(user._id);
 
+  res.cookie('token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 24 * 60 * 60 * 1000,
+  });
+
   res.json({
     success: true,
     message: 'Login successful',
-    data: { user, token }
+    data: { user }
   });
 });
 
@@ -109,8 +123,18 @@ const getMe = asyncHandler(async (req, res) => {
   });
 });
 
+const logout = asyncHandler(async (req, res) => {
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+  });
+  res.json({ success: true, message: 'Logged out successfully' });
+});
+
 module.exports = {
   register,
   login,
-  getMe
+  getMe,
+  logout,
 };
