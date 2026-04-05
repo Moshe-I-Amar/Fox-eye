@@ -1,47 +1,67 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import socketService from '../../services/socketService';
-import useOfflineQueue   from '../../hooks/useOfflineQueue';
-import useFieldEvents    from '../../hooks/useFieldEvents';
+import useOfflineQueue from '../../hooks/useOfflineQueue';
+import useFieldEvents  from '../../hooks/useFieldEvents';
+import useAOs          from '../../hooks/useAOs';
+import useViolations   from '../../hooks/useViolations';
+import { useAuth }     from '../../context/AuthContext';
 import MobileLayout    from './MobileLayout';
-import PanicPanel      from './PanicPanel';
 import MobileFieldMap  from './MobileFieldMap';
 import MobileEventFeed from './MobileEventFeed';
 import NotificationPrompt from '../../components/ui/NotificationPrompt';
 
 /**
- * MobileFieldView — root page for the field mobile interface.
+ * MobileFieldView — root page for the Phase 2 mobile operational interface.
  *
- * Manages: socket connection, GPS watching, wake lock, network status,
- * offline event queue, connection/GPS status indicators.
+ * Manages: socket connection, GPS watcher, wake lock, network status,
+ * offline event queue, and derives the composite `connectionStatus` fed
+ * to LiveStatusIndicator (socket state + AO data health).
  *
- * Events are lifted here so both MobileFieldMap (markers) and
- * MobileEventFeed (list) share the same live data without double-fetching.
+ * The map (MobileFieldMap) is always the full-screen base layer; everything
+ * else floats as overlays via TopNav (z-500) + BottomReportingSheet (z-400).
  *
- * Layout: MobileFieldMap is always the full-screen base layer (passed as
- * `mapSlot`). PanicPanel and MobileEventFeed render as bottom-sheet children
- * that slide up over the map — identical to the Google Maps mobile pattern.
- *
- * Route: /mobile  (requires role=user via RouteGuard in App.jsx)
+ * Route: /mobile  (RouteGuard requires role=user)
  */
 const MobileFieldView = () => {
-  const navigate = useNavigate();
+  const navigate   = useNavigate();
+  const { user }   = useAuth();
 
-  const [activeTab,         setActiveTab]         = useState('map');
-  const [userCoords,        setUserCoords]         = useState(null);
-  const [connectionStatus,  setConnectionStatus]  = useState('disconnected');
-  const [gpsStatus,         setGpsStatus]         = useState('searching');
-  const [wakeLockStatus,    setWakeLockStatus]    = useState('unsupported');
-  // Coords ([lng, lat]) to fly the map to when user taps "Show on map" in feed
-  const [mapFocusCoords,    setMapFocusCoords]    = useState(null);
+  const [userCoords,       setUserCoords]       = useState(null);
+  const [socketStatus,     setSocketStatus]     = useState('disconnected');
+  const [gpsStatus,        setGpsStatus]        = useState('searching');
+  const [wakeLockStatus,   setWakeLockStatus]   = useState('unsupported');
+  const [mapFocusCoords,   setMapFocusCoords]   = useState(null);
 
   const wakeLockRef = useRef(null);
-  const { queue, enqueue, flush } = useOfflineQueue();
 
-  // Shared event state — used by both map markers and event feed
-  const { events, loading: eventsLoading, error: eventsError, refetch: refetchEvents, updateEvent } = useFieldEvents(25);
+  const { queue, enqueue, flush }                                              = useOfflineQueue();
+  const { events, loading: eventsLoading, error: eventsError,
+          refetch: refetchEvents, updateEvent }                                = useFieldEvents(25);
+  const { aos, error: aoError, refetch: fetchAOs }                            = useAOs();
+  const { violations }                                                         = useViolations(true, {}, 10);
 
-  // ── Wake Lock ──────────────────────────────────────────────────────
+  // Load AO polygons on mount so the map can use them in a future phase
+  useEffect(() => { fetchAOs(); }, [fetchAOs]);
+
+  // ── Composite operational status ──────────────────────────────────────────
+  // Drives LiveStatusIndicator tri-state:
+  //   disconnected → red   (socket down)
+  //   reconnecting → amber (socket reconnecting OR AO data unavailable)
+  //   connected    → green (socket up + data healthy)
+  const connectionStatus = useMemo(() => {
+    if (socketStatus === 'disconnected') return 'disconnected';
+    if (socketStatus === 'reconnecting' || aoError) return 'reconnecting';
+    return 'connected';
+  }, [socketStatus, aoError]);
+
+  // Count breach-type violations for the TopNav badge
+  const activeViolationCount = useMemo(
+    () => violations.filter((v) => v.type === 'BREACH' || v.type === 'SUSTAINED_BREACH').length,
+    [violations]
+  );
+
+  // ── Wake Lock ─────────────────────────────────────────────────────────────
   const acquireWakeLock = useCallback(async () => {
     if (!('wakeLock' in navigator)) return;
     try {
@@ -65,9 +85,9 @@ const MobileFieldView = () => {
     };
   }, [acquireWakeLock]);
 
-  // ── Network status ─────────────────────────────────────────────────
+  // ── Network status ────────────────────────────────────────────────────────
   useEffect(() => {
-    const handleOffline = () => setConnectionStatus('disconnected');
+    const handleOffline = () => setSocketStatus('disconnected');
     const handleOnline  = () => flush();
     window.addEventListener('offline', handleOffline);
     window.addEventListener('online',  handleOnline);
@@ -77,17 +97,17 @@ const MobileFieldView = () => {
     };
   }, [flush]);
 
-  // ── Socket connection ──────────────────────────────────────────────
+  // ── Socket connection ─────────────────────────────────────────────────────
   useEffect(() => {
     socketService.connect(null, { sessionType: 'MOBILE' })
-      .then(() => setConnectionStatus('connected'))
-      .catch(() => setConnectionStatus('disconnected'));
+      .then(() => setSocketStatus('connected'))
+      .catch(() => setSocketStatus('disconnected'));
 
-    const onConnect       = () => { setConnectionStatus('connected'); flush(); };
-    const onDisconnect    = () => setConnectionStatus('disconnected');
-    const onReconnecting  = () => setConnectionStatus('reconnecting');
-    const onAuthError     = () => navigate('/login?reason=session-expired');
-    const onReconnFailed  = () => setConnectionStatus('disconnected');
+    const onConnect      = () => { setSocketStatus('connected'); flush(); };
+    const onDisconnect   = () => setSocketStatus('disconnected');
+    const onReconnecting = () => setSocketStatus('reconnecting');
+    const onAuthError    = () => navigate('/login?reason=session-expired');
+    const onReconnFailed = () => setSocketStatus('disconnected');
 
     socketService.on('connect',          onConnect);
     socketService.on('disconnect',       onDisconnect);
@@ -104,12 +124,9 @@ const MobileFieldView = () => {
     };
   }, [navigate, flush]);
 
-  // ── GPS watcher ────────────────────────────────────────────────────
+  // ── GPS watcher ───────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!navigator.geolocation) {
-      setGpsStatus('unavailable');
-      return;
-    }
+    if (!navigator.geolocation) { setGpsStatus('unavailable'); return; }
     setGpsStatus('searching');
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
@@ -129,15 +146,11 @@ const MobileFieldView = () => {
 
   const handleBack = useCallback(() => navigate('/dashboard'), [navigate]);
 
-  // Switches to MAP tab and flies to the given [lng, lat] coords
+  // When the feed triggers "show on map", just update the focus coords.
+  // The map is always visible as the base layer — no tab switching needed.
   const handleShowOnMap = useCallback((coords) => {
     setMapFocusCoords(coords);
-    setActiveTab('map');
   }, []);
-
-  // Panic buttons are never disabled by socket state — events go via REST API
-  // and the offline queue handles network failures gracefully.
-  const isPanelDisabled = false;
 
   return (
     <MobileLayout
@@ -151,27 +164,15 @@ const MobileFieldView = () => {
           gpsStatus={gpsStatus}
         />
       }
-      activeTab={activeTab}
-      onTabChange={setActiveTab}
+      user={user}
       connectionStatus={connectionStatus}
       gpsStatus={gpsStatus}
       wakeLockStatus={wakeLockStatus}
-      onBack={handleBack}
-    >
-      {activeTab === 'panic' && (
-        <>
-          <div className="px-4 pt-3 pb-1">
-            <NotificationPrompt />
-          </div>
-          <PanicPanel
-            userCoordinates={userCoords}
-            disabled={isPanelDisabled}
-            onQueueEvent={enqueue}
-            queuedCount={queue.length}
-          />
-        </>
-      )}
-      {activeTab === 'feed' && (
+      violations={activeViolationCount}
+      userCoordinates={userCoords}
+      onQueueEvent={enqueue}
+      queuedCount={queue.length}
+      feedSlot={
         <MobileEventFeed
           events={events}
           loading={eventsLoading}
@@ -180,8 +181,10 @@ const MobileFieldView = () => {
           onShowOnMap={handleShowOnMap}
           onEventUpdate={updateEvent}
         />
-      )}
-    </MobileLayout>
+      }
+      notificationSlot={<NotificationPrompt />}
+      onBack={handleBack}
+    />
   );
 };
 
