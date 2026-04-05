@@ -20,8 +20,13 @@ export const AuthProvider = ({ children }) => {
       })
       .catch(() => {
         if (!isActive) return;
-        localStorage.removeItem('user');
-        setUser(null);
+        // Only clear state if login() hasn't already set a user while this
+        // slow bootstrap request was in-flight (Render cold-start race condition).
+        setUser((prev) => {
+          if (prev !== null) return prev;
+          localStorage.removeItem('user');
+          return null;
+        });
       })
       .finally(() => {
         if (isActive) setAuthReady(true);

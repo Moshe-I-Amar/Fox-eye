@@ -11,6 +11,17 @@ const generateToken = (id) => {
   });
 };
 
+// SameSite=None; Secure is required for cross-site cookie delivery when the
+// frontend (Vercel) and backend (Render) are on different eTLD+1 domains.
+// SameSite=Strict would silently drop the cookie on every cross-site request.
+// CSRF is still covered by: Secure + CORS origin allowlist + credentials:true.
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+  maxAge: 24 * 60 * 60 * 1000,
+};
+
 const register = asyncHandler(async (req, res) => {
   const { name, email, password, inviteToken } = req.body;
 
@@ -61,12 +72,7 @@ const register = asyncHandler(async (req, res) => {
 
   const token = generateToken(user._id);
 
-  res.cookie('token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge: 24 * 60 * 60 * 1000,
-  });
+  res.cookie('token', token, COOKIE_OPTIONS);
 
   res.status(201).json({
     success: true,
@@ -102,12 +108,7 @@ const login = asyncHandler(async (req, res) => {
 
   const token = generateToken(user._id);
 
-  res.cookie('token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    maxAge: 24 * 60 * 60 * 1000,
-  });
+  res.cookie('token', token, COOKIE_OPTIONS);
 
   res.json({
     success: true,
@@ -124,11 +125,8 @@ const getMe = asyncHandler(async (req, res) => {
 });
 
 const logout = asyncHandler(async (req, res) => {
-  res.clearCookie('token', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-  });
+  const { maxAge: _omit, ...clearOptions } = COOKIE_OPTIONS;
+  res.clearCookie('token', clearOptions);
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
