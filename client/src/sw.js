@@ -3,6 +3,25 @@ import { registerRoute } from 'workbox-routing';
 import { NetworkFirst, CacheFirst } from 'workbox-strategies';
 import { CacheableResponsePlugin } from 'workbox-cacheable-response';
 import { ExpirationPlugin } from 'workbox-expiration';
+import { clientsClaim } from 'workbox-core';
+
+// Required for registerType: 'autoUpdate' (vite-plugin-pwa):
+// 1. skipWaiting — new SW activates immediately on install instead of waiting for
+//    all old tabs to close. Without this every new Vercel deployment keeps serving
+//    stale cached JS chunks, causing React init failures and broken event handlers.
+// 2. clientsClaim — new SW takes control of already-open tabs right after activation
+//    so they start receiving fresh assets without a page reload.
+// 3. SKIP_WAITING message handler — handles the postMessage sent by the autoUpdate
+//    shim; prevents the Workbox core.js "Cannot read properties of undefined
+//    (reading 'payload')" TypeError that occurs when this message is unhandled.
+self.skipWaiting();
+clientsClaim();
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
 
 // Injected by vite-plugin-pwa — must be present for injectManifest mode
 precacheAndRoute(self.__WB_MANIFEST);
