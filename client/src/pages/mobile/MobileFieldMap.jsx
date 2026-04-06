@@ -4,6 +4,7 @@ import L from 'leaflet';
 import socketService from '../../services/socketService';
 import { safeGetCoords, isValidCoords } from '../../utils/location';
 import { DEFAULT_MAP_CENTER, DEFAULT_MAP_ZOOM } from '../../config/constants';
+import styles from './MobileFieldMap.module.scss';
 
 // Self marker (gold-tinted) vs teammate marker (default blue)
 const SELF_ICON = new L.Icon({
@@ -99,7 +100,7 @@ const MapController = ({ center, triggerFly, focusCoords, onFocusConsumed }) => 
   // Animated fly triggered by the user pressing the center-on-me FAB
   useEffect(() => {
     if (!isValidCoords(center)) return;
-    map.flyTo(center, map.getZoom(), { animate: true, duration: 0.8 });
+    map.flyTo(center, 16, { animate: true, duration: 0.8 });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerFly]);
 
@@ -198,37 +199,29 @@ const MobileFieldMap = ({
      * the floating header and nav at z-[500] always render above the map without
      * needing artificially high z-values inside the map.
      */
-    <div className="absolute inset-0 z-0">
+    <div className={styles.mapRoot}>
 
       {/* ── Location permission denied overlay ──────────────────────────── */}
       {gpsStatus === 'unavailable' && !userCoordinates && (
-        <div className="absolute inset-x-4 z-[100]
-          flex flex-col gap-2 rounded-xl border border-red-500/40
-          bg-jet/95 backdrop-blur-sm p-4 shadow-[0_0_24px_rgba(239,68,68,0.2)]"
-          style={{ top: 'calc(3.5rem + 0.75rem)' }}
-        >
-          <div className="flex items-center gap-2 text-red-400 font-semibold text-sm tracking-wide">
-            <span className="text-base leading-none">⊗</span>
+        <div className={styles.gpsBlockedOverlay}>
+          <div className={styles.gpsBlockedTitle}>
+            <span className={styles.gpsBlockedIcon}>⊗</span>
             Location access blocked
           </div>
-          <p className="text-gold/70 text-xs leading-relaxed">
+          <p className={styles.gpsBlockedBody}>
             Fox-Eye needs your location to show your position and attach coordinates to field signals.
           </p>
-          <p className="text-gold/50 text-xs leading-relaxed">
-            Open your browser&apos;s <strong className="text-gold/70">site settings</strong> →{' '}
-            <strong className="text-gold/70">Location</strong> → set to{' '}
-            <strong className="text-gold/70">Allow</strong>, then reload the page.
+          <p className={styles.gpsBlockedHint}>
+            Open your browser&apos;s <strong>site settings</strong> →{' '}
+            <strong>Location</strong> → set to{' '}
+            <strong>Allow</strong>, then reload the page.
           </p>
         </div>
       )}
 
       {/* ── Teammate count badge ─────────────────────────────────────────── */}
-      <div className="absolute z-[100] flex items-center gap-1.5 px-2.5 py-1.5
-        bg-jet/80 backdrop-blur-sm rounded-full border border-gold/30
-        text-[10px] tracking-widest text-gold/70 uppercase pointer-events-none"
-        style={{ top: 'calc(3.5rem + 0.75rem)', left: '0.75rem' }}
-      >
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+      <div className={styles.onlineBadge}>
+        <span className={styles.onlineDot} />
         {onlineCount} online
       </div>
 
@@ -238,15 +231,15 @@ const MobileFieldMap = ({
         disabled={!isValidCoords(userCoordinates)}
         aria-label="Center map on my location"
         title="Center on me"
-        className="absolute right-4 z-[100]
-          w-11 h-11 rounded-full flex items-center justify-center
-          bg-charcoal/90 border border-gold/40 text-gold text-lg
-          shadow-gold-glow backdrop-blur-sm transition-all duration-150
-          hover:bg-slate-dark active:scale-95
-          disabled:opacity-30 disabled:cursor-not-allowed"
-        style={{ bottom: 'calc(3.5rem + env(safe-area-inset-bottom, 0px) + 1rem)' }}
+        className={styles.locateMeFab}
       >
-        ◎
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <line x1="12" y1="2" x2="12" y2="6"/>
+          <line x1="12" y1="18" x2="12" y2="22"/>
+          <line x1="2" y1="12" x2="6" y2="12"/>
+          <line x1="18" y1="12" x2="22" y2="12"/>
+        </svg>
       </button>
 
       {/*
@@ -254,7 +247,7 @@ const MobileFieldMap = ({
         that resolve correctly on all browsers.  height:100% through flex-item chains
         fails on mobile Safari; absolute inset-0 never does.
       */}
-      <div className="absolute inset-0">
+      <div className={styles.mapWrapper}>
         <MapContainer
           center={center}
           zoom={initialZoom}

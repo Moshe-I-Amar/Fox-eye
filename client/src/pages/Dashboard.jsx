@@ -32,6 +32,7 @@ import {
 import useAOs from '../hooks/useAOs';
 import useViolations from '../hooks/useViolations';
 import useFieldEvents from '../hooks/useFieldEvents';
+import styles from './Dashboard.module.scss';
 
 const MapController = ({ center, triggerFly, userLocation }) => {
   const map = useMap();
@@ -47,7 +48,7 @@ const MapController = ({ center, triggerFly, userLocation }) => {
   // Depends only on triggerFly so panning the map doesn't re-trigger the fly.
   useEffect(() => {
     if (!isValidCoords(userLocation)) return;
-    map.flyTo(userLocation, map.getZoom(), { animate: true, duration: 0.8 });
+    map.flyTo(userLocation, 16, { animate: true, duration: 0.8 });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triggerFly]);
 
@@ -463,21 +464,22 @@ const MapComponent = ({
   );
 
   return (
-    <div className="relative h-full w-full">
+    <div className={styles.mapComponentRoot}>
       {/* ── Locate-me FAB ──────────────────────────────────────────────────── */}
       <button
         onClick={handleCenterOnMe}
         disabled={!isValidCoords(userLocation)}
         aria-label="Center map on my location"
         title="Center on me"
-        className="absolute bottom-4 right-4 z-[900]
-          w-11 h-11 rounded-full flex items-center justify-center
-          bg-charcoal/90 border border-gold/40 text-gold text-lg
-          shadow-gold-glow backdrop-blur-sm transition-all duration-150
-          hover:bg-slate-dark active:scale-95
-          disabled:opacity-30 disabled:cursor-not-allowed"
+        className={styles.locateMeFab}
       >
-        ◎
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <line x1="12" y1="2" x2="12" y2="6"/>
+          <line x1="12" y1="18" x2="12" y2="22"/>
+          <line x1="2" y1="12" x2="6" y2="12"/>
+          <line x1="18" y1="12" x2="22" y2="12"/>
+        </svg>
       </button>
 
     <MapContainer
