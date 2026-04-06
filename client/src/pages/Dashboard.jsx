@@ -33,16 +33,24 @@ import useAOs from '../hooks/useAOs';
 import useViolations from '../hooks/useViolations';
 import useFieldEvents from '../hooks/useFieldEvents';
 
-const MapController = ({ center }) => {
+const MapController = ({ center, triggerFly, userLocation }) => {
   const map = useMap();
-  
+
   useEffect(() => {
     if (!isValidCoords(center)) {
       return;
     }
     map.setView(center, map.getZoom());
   }, [center, map]);
-  
+
+  // Fly to the user's own position when the locate-me button is pressed.
+  // Depends only on triggerFly so panning the map doesn't re-trigger the fly.
+  useEffect(() => {
+    if (!isValidCoords(userLocation)) return;
+    map.flyTo(userLocation, map.getZoom(), { animate: true, duration: 0.8 });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [triggerFly]);
+
   return null;
 };
 
@@ -388,6 +396,12 @@ const MapComponent = ({
   fieldEvents = [],
   onEventClick,
 }) => {
+  const [flyTrigger, setFlyTrigger] = useState(0);
+
+  const handleCenterOnMe = useCallback(() => {
+    if (isValidCoords(userLocation)) setFlyTrigger((n) => n + 1);
+  }, [userLocation]);
+
   const bindAoLayer = (aoId) => (layer) => {
     if (layer) {
       layer.options.aoId = aoId;
@@ -449,6 +463,23 @@ const MapComponent = ({
   );
 
   return (
+    <div className="relative h-full w-full">
+      {/* ── Locate-me FAB ──────────────────────────────────────────────────── */}
+      <button
+        onClick={handleCenterOnMe}
+        disabled={!isValidCoords(userLocation)}
+        aria-label="Center map on my location"
+        title="Center on me"
+        className="absolute bottom-4 right-4 z-[900]
+          w-11 h-11 rounded-full flex items-center justify-center
+          bg-charcoal/90 border border-gold/40 text-gold text-lg
+          shadow-gold-glow backdrop-blur-sm transition-all duration-150
+          hover:bg-slate-dark active:scale-95
+          disabled:opacity-30 disabled:cursor-not-allowed"
+      >
+        ◎
+      </button>
+
     <MapContainer
       center={center}
       zoom={DEFAULT_MAP_ZOOM}
@@ -459,8 +490,8 @@ const MapComponent = ({
         attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
         url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
       />
-      
-      <MapController center={center} />
+
+      <MapController center={center} triggerFly={flyTrigger} userLocation={userLocation} />
       <MapViewportSubscriber onViewportChange={onViewportChange} />
 
       <FeatureGroup ref={featureGroupRef}>
@@ -652,6 +683,7 @@ const MapComponent = ({
           );
         })}
     </MapContainer>
+    </div>
   );
 };
 
