@@ -81,7 +81,7 @@ const DashboardMap = ({ center, users, userLocation, onUserClick, liveUpdateIds,
       <button onClick={() => { if (isValidCoords(userLocation)) setFlyTrigger((n) => n + 1); }} disabled={!isValidCoords(userLocation)} aria-label="Center map on my location" title="Center on me" className={styles.locateMeFab}>
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
       </button>
-      <MapContainer center={center} zoom={DEFAULT_MAP_ZOOM} style={{ height: '100%', width: '100%' }} className="rounded-xl">
+      <MapContainer center={center} zoom={DEFAULT_MAP_ZOOM} style={{ height: '100%', width: '100%' }} className="rounded-xl" attributionControl={false}>
         <TileLayer attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>' url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
         <MapController center={center} triggerFly={flyTrigger} userLocation={userLocation} />
         <MapViewportSubscriber onViewportChange={onViewportChange} />
