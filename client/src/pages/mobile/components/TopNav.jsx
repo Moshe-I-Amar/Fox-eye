@@ -1,12 +1,10 @@
-import React, { memo } from 'react';
-import LiveStatusIndicator from './LiveStatusIndicator';
+import React, { memo, useState, useCallback } from 'react';
 
 // ── Fox Eye SVG logo ──────────────────────────────────────────────────────────
-// Minimal golden fox head silhouette with two eye dots and ear tips.
 const FoxEyeLogo = () => (
   <svg
-    width="26"
-    height="26"
+    width="28"
+    height="28"
     viewBox="0 0 32 32"
     fill="none"
     xmlns="http://www.w3.org/2000/svg"
@@ -31,112 +29,240 @@ const FoxEyeLogo = () => (
   </svg>
 );
 
-// ── GPS state icon config ─────────────────────────────────────────────────────
-const GPS_STYLES = {
-  locked:      { icon: '◎', className: 'text-emerald-400',              title: 'GPS locked'       },
-  searching:   { icon: '◌', className: 'text-amber-400 animate-pulse',  title: 'Searching GPS…'   },
-  unavailable: { icon: '⊗', className: 'text-red-400',                  title: 'GPS unavailable'  },
+// ── Status dot — green when connected, red otherwise ─────────────────────────
+const STATUS_DOT = {
+  connected:    { dot: 'bg-emerald-400', ring: 'bg-emerald-400/30', pulse: true,  label: 'Connected'    },
+  reconnecting: { dot: 'bg-red-500',     ring: 'bg-red-500/30',     pulse: true,  label: 'Reconnecting' },
+  disconnected: { dot: 'bg-red-500',     ring: '',                   pulse: false, label: 'Offline'      },
 };
 
-/**
- * TopNav — glassmorphism floating header for the mobile operational view.
- *
- * Isolated in its own memoized component so status updates never cause
- * the base map layer to re-render.
- *
- * Props:
- *   connectionStatus {string}       — 'connected' | 'reconnecting' | 'disconnected'
- *   gpsStatus        {string}       — 'locked' | 'searching' | 'unavailable'
- *   wakeLockStatus   {string}       — 'active' | 'released' | 'unsupported'
- *   violations       {number}       — active violation count (drives badge on LiveStatusIndicator)
- *   user             {object|null}  — auth user (name used for avatar initials)
- *   onBack           {fn|undefined} — if provided, renders a ← back arrow
- */
-const TopNav = memo(({
-  connectionStatus = 'disconnected',
-  gpsStatus        = 'searching',
-  wakeLockStatus   = 'unsupported',
-  violations       = 0,
-  user             = null,
-  onBack,
-}) => {
-  const gpsStyle = GPS_STYLES[gpsStatus] ?? GPS_STYLES.searching;
+const NetworkDot = memo(({ status = 'disconnected' }) => {
+  const cfg = STATUS_DOT[status] ?? STATUS_DOT.disconnected;
+  return (
+    <span className="relative flex h-3 w-3 shrink-0" aria-label={cfg.label} title={cfg.label}>
+      {cfg.pulse && (
+        <span
+          className={`animate-ping absolute inline-flex h-full w-full rounded-full ${cfg.ring} opacity-75`}
+        />
+      )}
+      <span className={`relative inline-flex rounded-full h-3 w-3 ${cfg.dot}`} />
+    </span>
+  );
+});
+NetworkDot.displayName = 'NetworkDot';
 
-  // Build up to 2 initials from user display name
+// ── GPS status config ─────────────────────────────────────────────────────────
+const GPS_LABELS = {
+  locked:      { label: 'GPS locked',      color: 'text-emerald-400' },
+  searching:   { label: 'Searching GPS…',  color: 'text-amber-400'   },
+  unavailable: { label: 'GPS unavailable', color: 'text-red-400'     },
+};
+
+// ── Burger icon ───────────────────────────────────────────────────────────────
+const BurgerIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+    <rect x="2" y="5"  width="18" height="2" rx="1" fill="currentColor" />
+    <rect x="2" y="10" width="18" height="2" rx="1" fill="currentColor" />
+    <rect x="2" y="15" width="18" height="2" rx="1" fill="currentColor" />
+  </svg>
+);
+
+// ── Close icon ────────────────────────────────────────────────────────────────
+const CloseIcon = () => (
+  <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+    <path d="M4 4 L16 16 M16 4 L4 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+  </svg>
+);
+
+// ── Slide-in drawer menu ──────────────────────────────────────────────────────
+const MenuDrawer = memo(({ open, onClose, user, gpsStatus, wakeLockStatus, onBack }) => {
+  const gps = GPS_LABELS[gpsStatus] ?? GPS_LABELS.searching;
   const initials = user?.name
     ? user.name.split(' ').map((w) => w[0]).join('').toUpperCase().slice(0, 2)
     : '?';
 
   return (
-    <header
-      className="absolute top-0 inset-x-0 z-[500]
-        flex items-center justify-between gap-3 px-4
-        bg-jet/80 backdrop-blur-[10px]
-        border-b border-gold/20 shadow-[0_2px_16px_rgba(0,0,0,0.5)]"
-      style={{
-        paddingTop: 'max(0.5rem, env(safe-area-inset-top))',
-        paddingBottom: '0.5rem',
-      }}
-    >
-      {/* ── Left: back arrow + Fox Eye logo ──────────────────────────────── */}
-      <div className="flex items-center gap-2 min-w-[2.5rem]">
-        {onBack && (
-          <button
-            onClick={onBack}
-            aria-label="Back to dashboard"
-            className="text-gold/60 hover:text-gold transition-colors text-lg leading-none -ml-1 pr-1"
-          >
-            ←
-          </button>
-        )}
-        <FoxEyeLogo />
-        <span className="text-[10px] tracking-[0.18em] text-gold/70 uppercase font-bold select-none hidden xs:inline">
-          Fox-Eye
-        </span>
-      </div>
+    <>
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        className={`fixed inset-0 z-[510] bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${
+          open ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        }`}
+        aria-hidden="true"
+      />
 
-      {/* ── Center: live status indicator ────────────────────────────────── */}
-      <div className="flex-1 flex items-center justify-center">
-        <LiveStatusIndicator status={connectionStatus} violations={violations} />
-      </div>
-
-      {/* ── Right: GPS icon + wake lock dot + user avatar ────────────────── */}
-      <div className="flex items-center gap-2.5 min-w-[2.5rem] justify-end">
-        <span
-          title={gpsStyle.title}
-          aria-label={gpsStyle.title}
-          className={`text-sm leading-none ${gpsStyle.className}`}
-        >
-          {gpsStyle.icon}
-        </span>
-
-        {wakeLockStatus !== 'unsupported' && (
-          <span
-            title={wakeLockStatus === 'active' ? 'Screen awake' : 'Screen lock inactive'}
-            aria-label={wakeLockStatus === 'active' ? 'Screen awake' : 'Screen lock inactive'}
-            className={`text-xs leading-none transition-colors ${
-              wakeLockStatus === 'active' ? 'text-gold/50' : 'text-gold/20'
-            }`}
-          >
-            {wakeLockStatus === 'active' ? '■' : '□'}
-          </span>
-        )}
-
-        {/* User avatar — initials in a gold-gradient circle */}
+      {/* Drawer panel */}
+      <aside
+        className={`fixed top-0 right-0 z-[520] h-full w-72 max-w-[85vw]
+          bg-charcoal border-l border-gold/20
+          shadow-[−4px_0_32px_rgba(0,0,0,0.6)]
+          flex flex-col
+          transform transition-transform duration-300 ease-in-out
+          ${open ? 'translate-x-0' : 'translate-x-full'}`}
+        aria-label="Navigation menu"
+        role="dialog"
+        aria-modal="true"
+      >
+        {/* Drawer header */}
         <div
-          title={user?.name ?? 'Profile'}
-          aria-label={`Logged in as ${user?.name ?? 'unknown'}`}
-          className="w-7 h-7 rounded-full
-            bg-gradient-to-br from-gold to-gold-light
-            flex items-center justify-center
-            text-jet text-[10px] font-bold
-            border border-gold/40 select-none shrink-0
-            shadow-gold-glow"
+          className="flex items-center justify-between px-5 border-b border-gold/20"
+          style={{
+            paddingTop: 'max(0.75rem, env(safe-area-inset-top))',
+            paddingBottom: '0.75rem',
+          }}
         >
-          {initials}
+          <span className="text-[11px] tracking-[0.2em] uppercase font-bold text-gold/70">
+            Menu
+          </span>
+          <button
+            onClick={onClose}
+            aria-label="Close menu"
+            className="text-gold/50 hover:text-gold transition-colors p-1 -mr-1"
+          >
+            <CloseIcon />
+          </button>
         </div>
-      </div>
-    </header>
+
+        {/* User profile card */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-gold/10">
+          <div
+            className="w-10 h-10 rounded-full shrink-0
+              bg-gradient-to-br from-gold to-gold-light
+              flex items-center justify-center
+              text-jet text-sm font-bold
+              border border-gold/40 shadow-gold-glow select-none"
+          >
+            {initials}
+          </div>
+          <div className="min-w-0">
+            <p className="text-white text-sm font-semibold truncate">{user?.name ?? '—'}</p>
+            <p className="text-gray-400 text-[11px] truncate capitalize">{user?.operationalRole?.replace(/_/g, ' ') ?? user?.role ?? ''}</p>
+          </div>
+        </div>
+
+        {/* Status rows */}
+        <div className="flex flex-col gap-1 px-5 py-3 border-b border-gold/10">
+          {/* GPS status */}
+          <div className="flex items-center gap-3 py-2">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="shrink-0 text-gray-400">
+              <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M8 1v2M8 13v2M1 8h2M13 8h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <span className="text-gray-400 text-xs">GPS</span>
+            <span className={`ml-auto text-xs font-medium ${gps.color}`}>{gps.label}</span>
+          </div>
+
+          {/* Wake lock (hidden if unsupported) */}
+          {wakeLockStatus !== 'unsupported' && (
+            <div className="flex items-center gap-3 py-2">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="shrink-0 text-gray-400">
+                <rect x="3" y="7" width="10" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M5 7V5a3 3 0 016 0v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              <span className="text-gray-400 text-xs">Screen</span>
+              <span className={`ml-auto text-xs font-medium ${wakeLockStatus === 'active' ? 'text-gold' : 'text-gray-500'}`}>
+                {wakeLockStatus === 'active' ? 'Awake' : 'Default'}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex flex-col gap-1 px-4 py-3 mt-auto">
+          {onBack && (
+            <button
+              onClick={() => { onClose(); onBack(); }}
+              className="flex items-center gap-3 px-3 py-3 rounded-lg
+                text-gray-300 hover:text-white hover:bg-slate-dark
+                transition-colors text-sm font-medium w-full text-left"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M10 12L6 8l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Back to Dashboard
+            </button>
+          )}
+        </div>
+      </aside>
+    </>
+  );
+});
+MenuDrawer.displayName = 'MenuDrawer';
+
+// ── TopNav — simplified 3-column header ──────────────────────────────────────
+/**
+ * TopNav — glassmorphism floating header for the mobile operational view.
+ *
+ * Three columns:
+ *   Left   — Fox-Eye logo
+ *   Center — Network status dot (green = connected, red = offline/reconnecting)
+ *   Right  — Burger menu icon (opens slide-in drawer)
+ *
+ * Props:
+ *   connectionStatus {string}       — 'connected' | 'reconnecting' | 'disconnected'
+ *   gpsStatus        {string}       — 'locked' | 'searching' | 'unavailable'
+ *   wakeLockStatus   {string}       — 'active' | 'released' | 'unsupported'
+ *   user             {object|null}  — auth user (shown in drawer)
+ *   onBack           {fn|undefined} — "Back to Dashboard" action exposed in drawer
+ */
+const TopNav = memo(({
+  connectionStatus = 'disconnected',
+  gpsStatus        = 'searching',
+  wakeLockStatus   = 'unsupported',
+  user             = null,
+  onBack,
+}) => {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const openMenu  = useCallback(() => setMenuOpen(true),  []);
+  const closeMenu = useCallback(() => setMenuOpen(false), []);
+
+  return (
+    <>
+      <header
+        className="absolute top-0 inset-x-0 z-[500]
+          grid grid-cols-3 items-center px-4
+          bg-jet/80 backdrop-blur-[10px]
+          border-b border-gold/20 shadow-[0_2px_16px_rgba(0,0,0,0.5)]"
+        style={{
+          paddingTop: 'max(0.5rem, env(safe-area-inset-top))',
+          paddingBottom: '0.5rem',
+        }}
+      >
+        {/* ── Col 1 (left): Fox-Eye logo ──────────────────────────────────── */}
+        <div className="flex items-center">
+          <FoxEyeLogo />
+        </div>
+
+        {/* ── Col 2 (center): network status dot ──────────────────────────── */}
+        <div className="flex items-center justify-center">
+          <NetworkDot status={connectionStatus} />
+        </div>
+
+        {/* ── Col 3 (right): burger menu button ───────────────────────────── */}
+        <div className="flex items-center justify-end">
+          <button
+            onClick={openMenu}
+            aria-label="Open menu"
+            aria-expanded={menuOpen}
+            aria-haspopup="dialog"
+            className="text-gold/70 hover:text-gold transition-colors p-1 -mr-1"
+          >
+            <BurgerIcon />
+          </button>
+        </div>
+      </header>
+
+      {/* Slide-in drawer (portaled above everything) */}
+      <MenuDrawer
+        open={menuOpen}
+        onClose={closeMenu}
+        user={user}
+        gpsStatus={gpsStatus}
+        wakeLockStatus={wakeLockStatus}
+        onBack={onBack}
+      />
+    </>
   );
 });
 

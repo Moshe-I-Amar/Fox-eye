@@ -19,7 +19,7 @@ import BottomReportingSheet from './components/BottomReportingSheet';
  *   connectionStatus {string}            — 'connected' | 'reconnecting' | 'disconnected'
  *   gpsStatus        {string}            — 'locked' | 'searching' | 'unavailable'
  *   wakeLockStatus   {string}            — 'active' | 'released' | 'unsupported'
- *   violations       {number}            — active violation count (badge in TopNav)
+ *   violations       {number}            — active violation count (currently unused; kept for future use)
  *   userCoordinates  {[lng,lat]|null}    — own GPS position (forwarded to ReportingGrid)
  *   onQueueEvent     {fn}                — offline event queue enqueue
  *   queuedCount      {number}            — offline queue length
@@ -52,7 +52,6 @@ const MobileLayout = ({
       connectionStatus={connectionStatus}
       gpsStatus={gpsStatus}
       wakeLockStatus={wakeLockStatus}
-      violations={violations}
       user={user}
       onBack={onBack}
     />
