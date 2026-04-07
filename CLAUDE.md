@@ -88,7 +88,7 @@ await logAdminAction({ action: 'invite.create', actorUserId, targetType: 'invite
 | `src/routes/pushRoutes.js` | Push subscription routes — GET vapid-public-key (public), POST/DELETE /subscribe (auth) |
 
 ### Domain model
-- **User**: location (GeoJSON Point, 2dsphere index), role (`admin`/`user`), operationalRole, unitId/companyId/teamId/squadId (all required), status (`active`/`pending`/`rejected`, default `active`), active (bool, default true)
+- **User**: location (GeoJSON Point, 2dsphere index), role (`admin`/`user`), operationalRole, unitId/companyId/teamId/squadId (all required), status (`active`/`pending`/`rejected`, default `active`), active (bool, default true), online (bool, default false), lastSeen (Date, default null) — `online`/`lastSeen` are maintained by `presenceManager` on socket connect/disconnect and set to `false`/`now` on logout
 - **InviteToken**: token (32-byte hex, unique), createdBy, expiresAt, usedAt/usedBy, assignedRole, assignedOperationalRole, unitId/companyId/teamId/squadId, inviterName, active
 - **AO**: GeoJSON Polygon, companyId, active, style
 - **ViolationEvent**: type (`APPROACHING_BOUNDARY` | `BREACH` | `SUSTAINED_BREACH`), userId, aoId, coordinates, timestamp
@@ -127,7 +127,7 @@ Registration is invite-gated. Flow: admin creates invite → shares link → use
 Auth (rate limited: 5/15min for login/register, 20/15min for invite):
   POST   /api/auth/register            # Invite-gated registration; sets HttpOnly session cookie
   POST   /api/auth/login               # Email/password login; sets HttpOnly session cookie
-  POST   /api/auth/logout              # Clears session cookie (no auth required)
+  POST   /api/auth/logout              # Clears session cookie + marks user online=false in DB (no auth required)
   GET    /api/auth/me                  # Current user profile (auth required)
   GET    /api/auth/invite/:token       # Validate invite token (public)
 
@@ -253,9 +253,27 @@ components/ui/NotificationPrompt.jsx  — inline push-notification opt-in/opt-ou
 | `src/App.jsx` | Routing wrapped in `<AuthProvider>`; uses `<RouteGuard>` for protected routes |
 | `src/context/AuthContext.jsx` | `AuthProvider` + `useAuth()` hook — single source of truth for auth state |
 | `src/components/layout/RouteGuard.jsx` | Composable route guard (props: requireRole, requireOperationalRoles, fallback) |
-| `src/pages/Dashboard.jsx` | Main map view, live location, socket; field event markers (INJURED/AMBUSH/LINK_UP pins, pulse on ACTIVE) + sidebar Field Events panel with focus-on-click + inline ACK/RESOLVE buttons; in-app AlertBanner on `field:event:new` with one-click ACK (INJURED/AMBUSH stays until dismissed, LINK_UP auto-dismisses after 8 s) |
-| `src/pages/Admin.jsx` | AO management, violations list |
-| `src/pages/AdminManagement.jsx` | User + hierarchy management |
+| `src/pages/Dashboard.jsx` | Orchestrator shell (~140 lines) — composes DashboardMap + DashboardSidebar + AOModal + UserDetailModal; delegates socket events to useDashboardSocket, GPS to useLocationTracking, hierarchy to useHierarchyData, AO CRUD to useAOHandlers |
+| `src/pages/dashboard/DashboardMap.jsx` | Leaflet map panel with MapController, viewport subscriber, user/AO/field-event markers; props: `center`, `users`, `userLocation`, `liveUpdateIds`, `aos`, `fieldEvents`, `canManageAOs`, `getCompanyIdentity`, `onViewportChange`, `onUserClick`, `onEventClick`, AO CRUD callbacks |
+| `src/pages/dashboard/DashboardSidebar.jsx` | Composes AOPanel + FieldEventsPanel + ViolationsPanel + user list + location controls |
+| `src/pages/dashboard/AOPanel.jsx` | AO list with edit/enable/disable; uses `isImageUrl` from markerUtils |
+| `src/pages/dashboard/FieldEventsPanel.jsx` | Events list with ACK/RESOLVE buttons |
+| `src/pages/dashboard/ViolationsPanel.jsx` | Violations list with severity/company/date filters |
+| `src/pages/dashboard/AOModal.jsx` | AO create/edit form modal |
+| `src/pages/dashboard/UserDetailModal.jsx` | User detail popup |
+| `src/pages/dashboard/useAOHandlers.js` | AO CRUD state machine — `aoDraft`, `aoModalMode`, `aoForm`, `handleAOCreate/Edit/Delete/Select/Cancel/Submit`, `handleToggleAOActive` |
+| `src/pages/dashboard/useHierarchyData.js` | Loads hierarchy tree, returns `{ hierarchyMap, companyOptions }` |
+| `src/pages/dashboard/useLocationTracking.js` | GPS watchPosition + throttled location send; returns `{ userLocation, locationLoading, locationError }`; calls `onFirstLocation` once on first fix |
+| `src/pages/dashboard/useDashboardSocket.js` | All Dashboard socket event handlers (location, presence, field events, AO realtime); returns `{ liveUpdateIds, onlineUsers }` |
+| `src/pages/Admin.jsx` | AO management, violations list; uses `useSocketConnection` hook |
+| `src/pages/admin/AdminUserDetailModal.jsx` | Full user details modal for Admin page |
+| `src/pages/admin/BreachAlertPanel.jsx` | Breach alerts list with auto-dismiss |
+| `src/pages/AdminManagement.jsx` | Thin shell (~100 lines) — destructures `useAdminManagement()` and renders tabs + modals |
+| `src/pages/admin-management/useAdminManagement.js` | All AdminManagement state + handlers in one hook |
+| `src/pages/admin-management/HierarchyModals.jsx` | Exports `CompanyModal`, `TeamModal`, `SquadModal` |
+| `src/pages/admin-management/UserModals.jsx` | Exports `UserModal`, `RolesModal`, `ConfirmModal` |
+| `src/pages/admin-management/InviteModal.jsx` | Invite link generation modal |
+| `src/pages/admin-management/HierarchyTree.jsx` | Hierarchy tree visualization (Unit → Company → Team → Squad) |
 | `src/pages/Register.jsx` | Invite-gated registration — requires `?token=` URL param |
 | `src/pages/Login.jsx` | Login + account-status notice display (reason codes in URL) |
 | `src/services/api.js` | Axios instance with JWT interceptor + account-state redirect logic |
@@ -267,16 +285,22 @@ components/ui/NotificationPrompt.jsx  — inline push-notification opt-in/opt-ou
 | `src/hooks/useFieldEvents.js` | Fetch + live socket subscription for field events; returns `{ events, loading, error, refetch, updateEvent }`; `updateEvent(id, patch)` applies optimistic local update; socket ACK/RESOLVE handlers merge onto existing entry to preserve populated `senderId` |
 | `src/hooks/useOfflineQueue.js` | Persist + flush field events queued while offline; returns `{ queue, enqueue, flush }` — backed by `localStorage` |
 | `src/hooks/useNotifications.js` | Push notification state — `{ supported, permission, subscribed, loading, error, enable, disable }` |
+| `src/hooks/useSocketConnection.js` | Shared socket lifecycle hook used by Dashboard and Admin; params `{ navigate, onConnect }`; returns `{ realtimeEnabled, realtimeStatus, realtimeNotice, realtimeNoticeTone, clearRealtimeNotice }` |
+| `src/utils/markerUtils.js` | All SVG marker builders + Leaflet Icon factories + event configs; exports `sanitizeColor`, `isImageUrl`, `isValidIconValue`, `buildUserPinSvg`, `buildEventMarkerSvg`, `buildClusterMarkerSvg`, `createUserMarkerIcon`, `createEventMarkerIcon`, `createClusterMarkerIcon`, `getEventIconCached` (module-level cache), `EVENT_TYPE_CONFIG`, `EVENT_STATUS_OPACITY` |
+| `src/utils/mapGeometry.js` | Map geometry helpers: `isPointInPolygon`, `findAoForPoint`, `toGeoPolygon`, `toLatLngs`, `calculateDistance`, `normalizeCoords` |
+| `src/utils/roleUtils.js` | `OPERATIONAL_ROLE_RANK` map and `operationalRoles` array — shared between client pages and admin logic |
+| `src/utils/formatUtils.js` | `formatTimestamp`, `formatViolationType` — shared formatting helpers |
 | `src/sw.js` | Custom service worker source (injectManifest mode) — Workbox precache + runtime caching + `push` event handler + `notificationclick` handler |
 | `src/pages/mobile/MobileFieldView.jsx` | Mobile page — GPS watcher, socket MOBILE session, Wake Lock, network-status detection, offline queue flush; uses `useFieldEvents(25)`, `useAOs`, `useViolations`, `useAuth`; derives composite `connectionStatus` from socket state + AO error; passes `feedSlot`/`notificationSlot`/`user` to MobileLayout; `handleShowOnMap` sets `mapFocusCoords` only (no tab switch — map always visible); route `/mobile` |
 | `src/pages/mobile/MobileLayout.jsx` | Phase 2 mobile shell — `100dvh`, map as `absolute inset-0 z-0`, TopNav at `z-[500]`, BottomReportingSheet at `z-[400]`; props: `mapSlot`, `user`, `connectionStatus`, `gpsStatus`, `wakeLockStatus`, `violations`, `userCoordinates`, `onQueueEvent`, `queuedCount`, `feedSlot`, `notificationSlot`, `onBack` |
 | `src/pages/mobile/components/TopNav.jsx` | Glassmorphism floating header; left: fox SVG logo; center: `LiveStatusIndicator`; right: GPS icon + wake-lock dot + user avatar (initials); props: `connectionStatus`, `gpsStatus`, `wakeLockStatus`, `violations`, `user`, `onBack` |
 | `src/pages/mobile/components/LiveStatusIndicator.jsx` | Memoized tri-state dot — green+pulse=connected, amber+pulse=reconnecting, red=disconnected; optional `violations` badge; isolated so status changes never re-render the map layer |
 | `src/pages/mobile/components/BottomReportingSheet.jsx` | Draggable action sheet (`z-[400]`); collapsed=handle+chevron only (~2.75rem); expanded=two tabs: "Report" (ReportingGrid) and "Events" (feedSlot); swipe-up/down + tap-to-toggle; props: `userCoordinates`, `onQueueEvent`, `queuedCount`, `feedSlot`, `notificationSlot` |
-| `src/pages/mobile/components/ReportingGrid.jsx` | Memoized 2×2 action grid replacing PanicPanel in Phase 2; top row=SOS (INJURED red, AMBUSH amber), bottom row=Contact (LINK_UP green) + EVENTS shortcut; min-h-[80px] cells; haptic feedback; confirm modal; offline queuing; props: `userCoordinates`, `onQueueEvent`, `queuedCount`, `onViewEvents`, `disabled` |
-| `src/pages/mobile/PanicPanel.jsx` | Three full-width panic buttons (INJURED/AMBUSH/LINK_UP) — superseded by ReportingGrid in Phase 2 but retained; props: `userCoordinates`, `disabled`, `onQueueEvent`, `queuedCount` |
-| `src/pages/mobile/MobileFieldMap.jsx` | Hierarchy-scoped Leaflet map; props: `userCoordinates`, `events`, `focusCoords`, `onFocusConsumed`, `initialZoom`, `showZoomControl`; renders field event markers (same SVG icon style as Dashboard) + pulse on ACTIVE; flies to `focusCoords` ([lng,lat]) when set, then calls `onFocusConsumed`; includes center-on-me FAB |
-| `src/pages/mobile/MobileEventFeed.jsx` | Live field events list; props: `events`, `loading`, `error`, `refetch`, `onShowOnMap`, `onEventUpdate`; shows sender name + operationalRole; "show on map" (◎) button per event with valid coords; ACK/RESOLVE apply optimistic update via `onEventUpdate` before socket confirms |
+| `src/pages/mobile/components/ReportingGrid.jsx` | Memoized 2×2 action grid; top row=SOS (INJURED red, AMBUSH amber), bottom row=Contact (LINK_UP green) + EVENTS shortcut; min-h-[80px] cells; haptic feedback; uses `SignalConfirmModal`; offline queuing; props: `userCoordinates`, `onQueueEvent`, `queuedCount`, `onViewEvents`, `disabled` |
+| `src/pages/mobile/components/SignalConfirmModal.jsx` | Confirm dialog for ReportingGrid signal sends; props: `pending`, `sending`, `noGps`, `onClose`, `onConfirm` |
+| `src/pages/mobile/MobileFieldMap.jsx` | Hierarchy-scoped Leaflet map; imports `getEventIconCached`, `EVENT_TYPE_CONFIG`, `createClusterMarkerIcon` from markerUtils; props: `userCoordinates`, `events`, `focusCoords`, `onFocusConsumed`, `initialZoom`, `showZoomControl`; renders field event markers + pulse on ACTIVE; groups co-located teammates into cluster markers; flies to `focusCoords`; includes center-on-me FAB |
+| `src/pages/mobile/MobileEventFeed.jsx` | Live field events list; delegates each row to `EventCard`; props: `events`, `loading`, `error`, `refetch`, `onShowOnMap`, `onEventUpdate` |
+| `src/pages/mobile/EventCard.jsx` | Single event row — type/status badges, sender info, show-on-map button, ACK/RESOLVE buttons; props: `event`, `isPending`, `onShowOnMap`, `onRespond` |
 
 ### Map patterns
 - `MapContainer` parent div must have explicit height (`h-screen`, `h-[calc(...)]`, or `h-full` inside a flex container)
@@ -306,12 +330,13 @@ components/ui/NotificationPrompt.jsx  — inline push-notification opt-in/opt-ou
 | Mobile map invisible | MobileLayout Phase 2 uses `absolute inset-0 z-0` for the map inside a `relative overflow-hidden` root — ensure `MobileFieldMap`'s root div is `absolute inset-0 z-0` and `MapContainer` is wrapped in `<div className="absolute inset-0">` |
 | ReportingGrid button disabled unexpectedly | `disabled={false}` is hardcoded in `BottomReportingSheet` — buttons are never gated by socket state; if appearing disabled check the `disabled` prop passed to `ReportingGrid` |
 | Field event POST 422 velocity | Two rapid events with large coordinate delta — `validateAntiSpoof` in `fieldEventService.js` |
-| Panic send silently queued instead of sent | `navigator.onLine === false` or no `err.status` → `useOfflineQueue.enqueue()` was called; check `queuedCount` badge on PanicPanel |
+| Panic send silently queued instead of sent | `navigator.onLine === false` or no `err.status` → `useOfflineQueue.enqueue()` was called; check `queuedCount` badge on ReportingGrid |
 | Wake lock not acquired | Browser requires a user gesture before `wakeLock.request()` on some versions; also unavailable in non-secure (non-HTTPS) contexts |
 | Push subscription silently fails | VAPID keys missing from server `.env` — `GET /api/push/vapid-public-key` returns 503; generate keys with `npx web-push generate-vapid-keys` |
 | Push prompt never appears | Browser blocked notifications (permission=`denied`) or non-HTTPS context — `NotificationPrompt` hides itself in both cases |
 | SW push handler missing after build | `vite.config.js` must use `strategies: 'injectManifest'` pointing to `src/sw.js`; do not switch back to `generateSW` mode |
 | Field event markers not showing on map | `ev.coordinates.coordinates` is `[lng, lat]` (GeoJSON) — Leaflet needs `[lat, lng]`; also check that `useFieldEvents` is mounted and events have valid coords |
+| Offline/logged-out users still visible on map | `GET /api/users/near` only returns users where `online: true` OR `lastSeen` within 1 hour — if a user appears stale, check `presenceManager` flushed `online=false` to DB; server crash leaves stale `online:true` cleared by `PresenceManager.resetStalePresence()` on startup |
 
 ---
 
@@ -333,7 +358,7 @@ Helmet is configured with an explicit CSP in `server/src/app.js`:
 - **`CLIENT_ORIGIN` is comma-separated** — always `.split(',')` before spreading into CSP directives; passing the raw string crashes Helmet
 
 ### SVG Injection Prevention
-Map marker SVGs interpolate colors from DB (company color field). Two defenses in `Dashboard.jsx`:
+Map marker SVGs interpolate colors from DB (company color field). Two defenses in `src/utils/markerUtils.js`:
 - `sanitizeColor(value)` — strict hex (`#abc` / `#aabbcc`) and `rgb()`/`rgba()` allowlist; falls back to `DEFAULT_AO_COLOR`
 - `isImageUrl(value)` — explicitly blocks `data:image/svg+xml` to prevent SVG-in-SVG script execution; allows `data:image/<non-svg>`, `https://`, `blob:`, `/path`
 
