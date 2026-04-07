@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import Card from '../../components/ui/Card';
 import { isImageUrl } from '../../utils/markerUtils';
 import { DEFAULT_AO_COLOR } from '../../config/constants';
 
-const AOPanel = ({ aos, aoLoading, aoError, canManageAOs, getCompanyIdentity, onSelectAO, onToggleAOActive }) => {
+const AOPanel = ({ aos, aoLoading, aoError, canManageAOs, getCompanyIdentity, onSelectAO, onToggleAOActive, onDeleteAO }) => {
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const renderIcon = (ao) => {
     const { color, icon } = getCompanyIdentity(ao);
     const trimmedIcon = `${icon || ''}`.trim();
@@ -49,8 +50,20 @@ const AOPanel = ({ aos, aoLoading, aoError, canManageAOs, getCompanyIdentity, on
                 </div>
                 {canManageAOs && (
                   <div className="flex items-center space-x-2">
-                    <button className="text-xs text-gold/70 hover:text-gold" onClick={() => onSelectAO(ao)}>Edit</button>
-                    <button className="text-xs text-gold/70 hover:text-gold" onClick={() => onToggleAOActive(ao)}>{ao.active ? 'Disable' : 'Enable'}</button>
+                    {confirmDeleteId === ao._id ? (
+                      <>
+                        <button className="text-xs text-red-400 hover:text-red-300 font-semibold" onClick={() => { onDeleteAO(ao); setConfirmDeleteId(null); }}>Confirm</button>
+                        <button className="text-xs text-gold/50 hover:text-gold" onClick={() => setConfirmDeleteId(null)}>Cancel</button>
+                      </>
+                    ) : (
+                      <>
+                        <button className="text-xs text-gold/70 hover:text-gold" onClick={() => onSelectAO(ao)}>Edit</button>
+                        <button className="text-xs text-gold/70 hover:text-gold" onClick={() => onToggleAOActive(ao)}>{ao.active ? 'Disable' : 'Enable'}</button>
+                        <button className="text-xs text-red-400/60 hover:text-red-400" onClick={() => setConfirmDeleteId(ao._id)} title="Delete AO">
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

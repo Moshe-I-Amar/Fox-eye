@@ -94,7 +94,7 @@ const MobileFieldMap = ({ userCoordinates, events = [], focusCoords = null, onFo
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
       </button>
       <div className={styles.mapWrapper}>
-        <MapContainer center={center} zoom={initialZoom} style={{ height: '100%', width: '100%' }} zoomControl={false}>
+        <MapContainer center={center} zoom={initialZoom} style={{ height: '100%', width: '100%' }} zoomControl={false} attributionControl={false}>
           <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
           {showZoomControl && <ZoomControl position="bottomleft" />}
           <MapController center={center} triggerFly={flyTrigger} focusCoords={focusCoords} onFocusConsumed={onFocusConsumed} />

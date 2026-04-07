@@ -7,7 +7,7 @@ import ViolationsPanel from './ViolationsPanel';
 const DashboardSidebar = ({
   isOpen, realtimeEnabled, users, loading, radius, locationLoading, locationError,
   onRadiusChange, onSelectUser,
-  aos, aoLoading, aoError, canManageAOs, getCompanyIdentity, onSelectAO, onToggleAOActive,
+  aos, aoLoading, aoError, canManageAOs, getCompanyIdentity, onSelectAO, onToggleAOActive, onDeleteAO,
   visibleEvents, activeEventCount, fieldEventsLoading, showResolvedEvents, onToggleResolved,
   respondingIds, onRespond, onFocusEvent,
   canViewViolations, violations, violationLoading, violationError, violationFilters,
@@ -35,7 +35,7 @@ const DashboardSidebar = ({
       </div>
     </Card>
 
-    <AOPanel aos={aos} aoLoading={aoLoading} aoError={aoError} canManageAOs={canManageAOs} getCompanyIdentity={getCompanyIdentity} onSelectAO={onSelectAO} onToggleAOActive={onToggleAOActive} />
+    <AOPanel aos={aos} aoLoading={aoLoading} aoError={aoError} canManageAOs={canManageAOs} getCompanyIdentity={getCompanyIdentity} onSelectAO={onSelectAO} onToggleAOActive={onToggleAOActive} onDeleteAO={onDeleteAO} />
     <FieldEventsPanel visibleEvents={visibleEvents} activeEventCount={activeEventCount} fieldEventsLoading={fieldEventsLoading} showResolvedEvents={showResolvedEvents} onToggleResolved={onToggleResolved} respondingIds={respondingIds} onRespond={onRespond} onFocusEvent={onFocusEvent} />
     {canViewViolations && <ViolationsPanel violations={violations} violationLoading={violationLoading} violationError={violationError} violationFilters={violationFilters} onFilterChange={(patch) => onViolationFilterChange((prev) => ({ ...prev, ...patch }))} companyOptions={companyOptions} hierarchyMap={hierarchyMap} onFocusViolation={onFocusViolation} />}
 

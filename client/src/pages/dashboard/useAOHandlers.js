@@ -15,6 +15,9 @@ const useAOHandlers = ({ setAos, fetchAOs, setAoError, companyOptions, currentUs
   const featureGroupRef = useRef(null);
   const currentUserRef = useRef(currentUser);
   currentUserRef.current = currentUser;
+  // Raised by handleAOSelect so the company-color effect doesn't overwrite
+  // the AO's own saved color when the edit modal opens.
+  const skipCompanyColorResetRef = useRef(false);
 
   const visibleCompanies = useMemo(() => {
     if (currentUser?.role === 'admin') return companyOptions;
@@ -30,6 +33,11 @@ const useAOHandlers = ({ setAos, fetchAOs, setAoError, companyOptions, currentUs
   }, [aoForm.companyId, visibleCompanies]);
 
   useEffect(() => {
+    // When opening the edit modal, handleAOSelect raises this flag so we
+    // preserve the AO's own saved color instead of overwriting with company color.
+    // The flag is consumed once here; a subsequent company dropdown change will
+    // go through normally and reset to the new company's color.
+    if (skipCompanyColorResetRef.current) { skipCompanyColorResetRef.current = false; return; }
     if (!aoForm.companyId) return;
     const company = companyOptions.find((c) => c._id === aoForm.companyId);
     if (!company) return;
@@ -81,6 +89,7 @@ const useAOHandlers = ({ setAos, fetchAOs, setAoError, companyOptions, currentUs
   }, [fetchAOs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleAOSelect = (ao) => {
+    skipCompanyColorResetRef.current = true; // preserve ao.style.color; don't let the company effect overwrite it
     setSelectedAO(ao);
     setAoForm({ name: ao.name || '', color: ao.style?.color || DEFAULT_AO_COLOR, icon: ao.style?.icon || '', pattern: ao.style?.pattern || '', companyId: ao.companyId || currentUser?.companyId || '' });
     setAoIconError(''); setAoNameError(''); setAoModalMode('edit'); setAoError('');
@@ -117,6 +126,24 @@ const useAOHandlers = ({ setAos, fetchAOs, setAoError, companyOptions, currentUs
     } catch { setAoError('Failed to save AO. Please try again.'); } finally { setAoSaving(false); }
   };
 
+  const handleAODirectDelete = useCallback(async (ao) => {
+    try {
+      setAoSaving(true);
+      await aoService.deleteAO(ao._id);
+      if (featureGroupRef.current) {
+        featureGroupRef.current.eachLayer((layer) => {
+          if (layer?.options?.aoId === ao._id) featureGroupRef.current.removeLayer(layer);
+        });
+      }
+      setAos((prev) => prev.filter((a) => a._id !== ao._id));
+      setSelectedAO((prev) => (prev?._id === ao._id ? null : prev));
+    } catch {
+      setAoError('Failed to delete AO. Please try again.');
+    } finally {
+      setAoSaving(false);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleToggleAOActive = async (ao) => {
     try {
       const next = !ao.active;
@@ -127,7 +154,7 @@ const useAOHandlers = ({ setAos, fetchAOs, setAoError, companyOptions, currentUs
 
   const isAoModalOpen = (aoModalMode === 'create' && !!aoDraft) || (aoModalMode === 'edit' && !!selectedAO);
 
-  return { aoDraft, aoModalMode, aoForm, setAoForm, aoIconError, setAoIconError, aoNameError, setAoNameError, selectedAO, aoSaving, featureGroupRef, visibleCompanies, isAoModalOpen, handleAOCreate, handleAOEdit, handleAODelete, handleAOSelect, handleAOCancel, handleAOSubmit, handleToggleAOActive };
+  return { aoDraft, aoModalMode, aoForm, setAoForm, aoIconError, setAoIconError, aoNameError, setAoNameError, selectedAO, aoSaving, featureGroupRef, visibleCompanies, isAoModalOpen, handleAOCreate, handleAOEdit, handleAODelete, handleAODirectDelete, handleAOSelect, handleAOCancel, handleAOSubmit, handleToggleAOActive };
 };
 
 export default useAOHandlers;

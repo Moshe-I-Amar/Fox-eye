@@ -84,9 +84,14 @@ const Dashboard = () => {
 
   const getCompanyIdentity = useCallback((ao) => {
     const company = hierarchyMap.companies[ao?.companyId];
-    return company
-      ? { color: company.color || '#C7A76C', icon: company.icon || '', pattern: company.pattern || null }
-      : { color: ao?.style?.color || '#C7A76C', icon: ao?.style?.icon || '', pattern: ao?.style?.pattern || null };
+    const companyColor = company?.color || '#C7A76C';
+    const companyIcon = company?.icon || '';
+    const companyPattern = company?.pattern || null;
+    return {
+      color: ao?.style?.color || companyColor,
+      icon: ao?.style?.icon || companyIcon,
+      pattern: ao?.style?.pattern || companyPattern,
+    };
   }, [hierarchyMap.companies]);
 
   const { visibleEvents, activeEventCount } = useMemo(() => {
@@ -123,7 +128,7 @@ const Dashboard = () => {
       </div>
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
         <DashboardSidebar isOpen={sidebarOpen} realtimeEnabled={realtimeEnabled} users={users} loading={loading} radius={radius} locationLoading={locationLoading} locationError={locationError} onRadiusChange={setRadius} onSelectUser={setSelectedUser}
-          aos={aos} aoLoading={aoLoading} aoError={aoError} canManageAOs={canManageAOs} getCompanyIdentity={getCompanyIdentity} onSelectAO={aoHandlers.handleAOSelect} onToggleAOActive={aoHandlers.handleToggleAOActive}
+          aos={aos} aoLoading={aoLoading} aoError={aoError} canManageAOs={canManageAOs} getCompanyIdentity={getCompanyIdentity} onSelectAO={aoHandlers.handleAOSelect} onToggleAOActive={aoHandlers.handleToggleAOActive} onDeleteAO={aoHandlers.handleAODirectDelete}
           visibleEvents={visibleEvents} activeEventCount={activeEventCount} fieldEventsLoading={fieldEventsLoading} showResolvedEvents={showResolvedEvents} onToggleResolved={setShowResolvedEvents} respondingIds={respondingIds} onRespond={handleEventRespond} onFocusEvent={(ev) => { const c = normalizeCoords(ev?.coordinates?.coordinates); if (c) setMapCenter(c); }}
           canViewViolations={canViewViolations} violations={violations} violationLoading={violationLoading} violationError={violationError} violationFilters={violationFilters} onViolationFilterChange={setViolationFilters} companyOptions={companyOptions} hierarchyMap={hierarchyMap} onFocusViolation={(v) => { const c = normalizeCoords(v?.coordinates); if (c) setMapCenter(c); }}
         />
