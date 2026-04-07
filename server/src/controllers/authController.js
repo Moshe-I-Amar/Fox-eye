@@ -126,6 +126,24 @@ const getMe = asyncHandler(async (req, res) => {
 
 const logout = asyncHandler(async (req, res) => {
   const { maxAge: _omit, ...clearOptions } = COOKIE_OPTIONS;
+
+  // Mark user offline immediately so they disappear from maps right away.
+  // (Socket disconnect also does this, but may lag or not fire for HTTP-only clients.)
+  const token = req.cookies?.token;
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      if (decoded?.id) {
+        await User.updateOne(
+          { _id: decoded.id },
+          { $set: { online: false, lastSeen: new Date() } }
+        );
+      }
+    } catch {
+      // Token invalid or expired — no-op; socket disconnect will clean up if needed
+    }
+  }
+
   res.clearCookie('token', clearOptions);
   res.json({ success: true, message: 'Logged out successfully' });
 });

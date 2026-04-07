@@ -42,8 +42,23 @@ const getUserById = async (id) => {
  * Returns users within a given radius using a geospatial aggregation.
  * Distance is returned in kilometres (rounded to 2 decimal places).
  */
+const ACTIVE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
+
 const getUsersNearby = async ({ lat, lng, maxDistanceKm, scopeQuery }) => {
   const maxDistance = maxDistanceKm * 1000; // convert km → metres for MongoDB
+
+  // Only return users who are currently online OR were seen within the last hour
+  const presenceFilter = {
+    $or: [
+      { online: true },
+      { lastSeen: { $gte: new Date(Date.now() - ACTIVE_THRESHOLD_MS) } }
+    ]
+  };
+
+  const geoQuery =
+    scopeQuery && Object.keys(scopeQuery).length > 0
+      ? { $and: [scopeQuery, presenceFilter] }
+      : presenceFilter;
 
   return User.aggregate([
     {
@@ -52,7 +67,7 @@ const getUsersNearby = async ({ lat, lng, maxDistanceKm, scopeQuery }) => {
         distanceField: 'distance',
         maxDistance,
         spherical: true,
-        query: scopeQuery
+        query: geoQuery
       }
     },
     {
@@ -60,7 +75,14 @@ const getUsersNearby = async ({ lat, lng, maxDistanceKm, scopeQuery }) => {
         name: 1,
         email: 1,
         role: 1,
+        operationalRole: 1,
+        unitId: 1,
+        companyId: 1,
+        teamId: 1,
+        squadId: 1,
         location: 1,
+        online: 1,
+        lastSeen: 1,
         createdAt: 1,
         distance: { $round: [{ $divide: ['$distance', 1000] }, 2] }
       }

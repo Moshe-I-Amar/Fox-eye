@@ -1,0 +1,85 @@
+// ── MobileFieldMap overlay styles ────────────────────────────────────────────
+// All visual styles for map overlays are here; the JSX contains no className
+// strings — only semantic class references via CSS Modules.
+
+// Root — fills the MobileLayout relative/100dvh parent at z-0 so the floating
+// header (z-500) and bottom sheet (z-400) always render above the map.
+.mapRoot {
+  @apply absolute inset-0 z-0;
+}
+
+// ── GPS permission denied overlay ────────────────────────────────────────────
+.gpsBlockedOverlay {
+  @apply absolute inset-x-4 z-[100];
+  @apply flex flex-col gap-2 rounded-xl;
+  @apply border border-red-500/40;
+  @apply bg-jet/95 backdrop-blur-sm p-4;
+  top: calc(3.5rem + 0.75rem);
+  box-shadow: 0 0 24px rgba(239, 68, 68, 0.2);
+}
+
+.gpsBlockedTitle {
+  @apply flex items-center gap-2 text-red-400 font-semibold text-sm tracking-wide;
+}
+
+.gpsBlockedIcon {
+  @apply text-base leading-none;
+}
+
+.gpsBlockedBody {
+  @apply text-gold/70 text-xs leading-relaxed;
+}
+
+.gpsBlockedHint {
+  @apply text-gold/50 text-xs leading-relaxed;
+
+  strong {
+    @apply text-gold/70;
+  }
+}
+
+// ── Online teammates badge ────────────────────────────────────────────────────
+.onlineBadge {
+  @apply absolute z-[100];
+  @apply flex items-center gap-1.5 px-2.5 py-1.5;
+  @apply bg-jet/80 backdrop-blur-sm rounded-full;
+  @apply border border-gold/30;
+  @apply text-[10px] tracking-widest text-gold/70 uppercase;
+  @apply pointer-events-none;
+  top: calc(3.5rem + 0.75rem);
+  left: 0.75rem;
+}
+
+.onlineDot {
+  @apply w-1.5 h-1.5 rounded-full bg-emerald-400;
+}
+
+// ── Locate-me FAB ─────────────────────────────────────────────────────────────
+.locateMeFab {
+  @apply absolute right-4 z-[100];
+  @apply w-11 h-11 rounded-full;
+  @apply flex items-center justify-center;
+  @apply bg-charcoal/90 border border-gold/40 text-gold;
+  @apply shadow-gold-glow backdrop-blur-sm;
+  @apply transition-all duration-150;
+  bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px) + 1rem);
+
+  &:hover:not(:disabled) {
+    @apply bg-slate-dark;
+  }
+
+  &:active:not(:disabled) {
+    @apply scale-95;
+  }
+
+  &:disabled {
+    @apply opacity-30 cursor-not-allowed;
+  }
+}
+
+// ── MapContainer wrapper ──────────────────────────────────────────────────────
+// absolute inset-0 gives Leaflet explicit pixel bounds that always resolve
+// correctly; height:100% through flex-item chains fails on mobile Safari.
+.mapWrapper {
+  @apply absolute inset-0;
+}
