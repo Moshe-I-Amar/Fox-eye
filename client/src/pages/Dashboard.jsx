@@ -134,7 +134,7 @@ const Dashboard = () => {
         />
         <div className="flex-1 min-h-0 p-4 lg:p-6">
           <Card className="h-full p-0">
-            <DashboardMap center={mapCenter} users={users} userLocation={userLocation} onUserClick={setSelectedUser} liveUpdateIds={liveUpdateIds} onViewportChange={useCallback((vp) => setViewportBounds(vp), [])} aos={aos} onAOCreate={aoHandlers.handleAOCreate} onAOEdit={aoHandlers.handleAOEdit} onAODelete={aoHandlers.handleAODelete} onAOSelect={aoHandlers.handleAOSelect} featureGroupRef={aoHandlers.featureGroupRef} canManageAOs={canManageAOs} getCompanyIdentity={getCompanyIdentity} fieldEvents={visibleEvents} onEventClick={(ev) => { const c = normalizeCoords(ev?.coordinates?.coordinates); if (c) setMapCenter(c); }} />
+            <DashboardMap center={mapCenter} users={users} userLocation={userLocation} onUserClick={setSelectedUser} liveUpdateIds={liveUpdateIds} onViewportChange={useCallback((vp) => setViewportBounds(vp), [])} aos={aos} onAOCreate={aoHandlers.handleAOCreate} onAOEdit={aoHandlers.handleAOEdit} onAODelete={aoHandlers.handleAODelete} onAOSelect={aoHandlers.handleAOSelect} featureGroupRef={aoHandlers.featureGroupRef} canManageAOs={canManageAOs} getCompanyIdentity={getCompanyIdentity} fieldEvents={visibleEvents} onEventClick={(ev) => { const c = normalizeCoords(ev?.coordinates?.coordinates); if (c) setMapCenter(c); }} onEventRespond={handleEventRespond} respondingIds={respondingIds} />
           </Card>
         </div>
       </div>

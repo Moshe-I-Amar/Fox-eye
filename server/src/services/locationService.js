@@ -25,8 +25,8 @@ class LocationService {
     return [longitude, latitude];
   }
 
-  buildLocationUpdatePayload({ user, coordinates, ao, updatedAt, timestamp }) {
-    return {
+  buildLocationUpdatePayload({ user, coordinates, ao, updatedAt, timestamp, heading, speed }) {
+    const payload = {
       userId: user._id.toString(),
       name: user.name,
       email: user.email,
@@ -40,16 +40,23 @@ class LocationService {
       updatedAt: updatedAt || new Date().toISOString(),
       timestamp: timestamp || new Date().toISOString()
     };
+    // Bearing fields are transient (not persisted); only include when valid
+    if (typeof heading === 'number' && Number.isFinite(heading)) payload.heading = heading;
+    if (typeof speed === 'number' && Number.isFinite(speed)) payload.speed = speed;
+    return payload;
   }
 
   async updateUserLocation({
     userId,
     user,
     coordinates,
+    heading,
+    speed,
     timestamp,
     socketService,
     excludeSocketId,
-    suppressSocketErrors = false
+    suppressSocketErrors = false,
+    locationBuffer
   }) {
     const validatedCoordinates = this.validateCoordinates(coordinates);
     const targetUser = user || (await this.userModel.findById(userId));
@@ -58,21 +65,32 @@ class LocationService {
       throw new Error('User not found');
     }
 
+    // Always update the in-memory location so the broadcast payload is current.
     targetUser.location = {
       type: 'Point',
       coordinates: validatedCoordinates
     };
 
-    await targetUser.save();
+    if (locationBuffer) {
+      // Non-blocking: enqueue for the next batch flush.
+      // Broadcast happens immediately below; only DB persistence is deferred.
+      locationBuffer.enqueue(targetUser._id, validatedCoordinates);
+    } else {
+      // Synchronous write — used by the HTTP REST endpoint and tests that
+      // run without a buffer instance.
+      await targetUser.save();
+    }
 
     const ao = await this.aoUtils.getAoForPoint({
       point: validatedCoordinates,
       companyId: targetUser.companyId
     });
     const aoSummary = this.aoUtils.toAoSummary(ao);
-    const updatedAt = targetUser.updatedAt
-      ? targetUser.updatedAt.toISOString()
-      : new Date().toISOString();
+    // When buffering, targetUser.updatedAt is the previous save timestamp
+    // (Mongoose only updates it on .save()). Use Date.now() for accuracy.
+    const updatedAt = locationBuffer
+      ? new Date().toISOString()
+      : (targetUser.updatedAt ? targetUser.updatedAt.toISOString() : new Date().toISOString());
 
     const resolvedTimestamp = timestamp || updatedAt;
 
@@ -81,7 +99,9 @@ class LocationService {
       coordinates: validatedCoordinates,
       ao: aoSummary,
       updatedAt,
-      timestamp: resolvedTimestamp
+      timestamp: resolvedTimestamp,
+      heading,
+      speed
     });
 
     if (socketService) {

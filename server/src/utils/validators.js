@@ -236,6 +236,64 @@ const validateFieldEventCreate = [
   handleValidationErrors
 ];
 
+const { MOBILIZATION_STATUSES } = require('../models/MobilizationEvent');
+// Only forward-phase transitions are accepted via the /status endpoint
+const ADVANCE_STATUSES = MOBILIZATION_STATUSES.filter((s) => s !== 'ACTIVE' && s !== 'STOOD_DOWN');
+
+const validateMobilizationCreate = [
+  body('targetScope')
+    .notEmpty()
+    .withMessage('targetScope is required')
+    .isObject()
+    .withMessage('targetScope must be an object'),
+  body('targetScope.unitId')
+    .notEmpty()
+    .isMongoId()
+    .withMessage('targetScope.unitId is required and must be a valid Mongo ID'),
+  body('targetScope.companyId')
+    .optional({ nullable: true })
+    .isMongoId()
+    .withMessage('targetScope.companyId must be a valid Mongo ID'),
+  body('targetScope.teamId')
+    .optional({ nullable: true })
+    .isMongoId()
+    .withMessage('targetScope.teamId must be a valid Mongo ID'),
+  body('incidentDescription')
+    .optional({ nullable: true })
+    .isString()
+    .trim()
+    .isLength({ max: 500 })
+    .withMessage('incidentDescription cannot exceed 500 characters'),
+  body('rallyPointName')
+    .optional({ nullable: true })
+    .isString()
+    .trim()
+    .isLength({ max: 100 })
+    .withMessage('rallyPointName cannot exceed 100 characters'),
+  body('rallyPoint')
+    .optional({ nullable: true })
+    .isObject()
+    .withMessage('rallyPoint must be an object'),
+  body('rallyPoint.coordinates')
+    .optional({ nullable: true })
+    .isArray({ min: 2, max: 2 })
+    .withMessage('rallyPoint.coordinates must be [longitude, latitude]'),
+  body('rallyPoint.coordinates.*')
+    .optional()
+    .isFloat()
+    .withMessage('Rally point coordinates must be numbers'),
+  handleValidationErrors
+];
+
+const validateMobilizationAdvance = [
+  body('status')
+    .notEmpty()
+    .withMessage('status is required')
+    .isIn(ADVANCE_STATUSES)
+    .withMessage(`status must be one of: ${ADVANCE_STATUSES.join(', ')}`),
+  handleValidationErrors
+];
+
 module.exports = {
   validateRegister,
   validateLogin,
@@ -245,5 +303,7 @@ module.exports = {
   validateAOActive,
   validateCreateInvite,
   validateFieldEventCreate,
+  validateMobilizationCreate,
+  validateMobilizationAdvance,
   handleValidationErrors
 };

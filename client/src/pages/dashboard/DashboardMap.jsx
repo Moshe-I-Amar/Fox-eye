@@ -5,11 +5,12 @@ import { isValidCoords, safeGetCoords } from '../../utils/location';
 import {
   sanitizeColor, isImageUrl, ROLE_LABEL,
   createUserMarkerIcon, createSelfMarkerIcon, createAoMarkerIcon,
-  createClusterMarkerIcon,
+  createClusterMarkerIcon, snapHeading,
   EVENT_TYPE_CONFIG, EVENT_STATUS_OPACITY, getEventIconCached,
 } from '../../utils/markerUtils';
 import { findAoForPoint, toLatLngs } from '../../utils/mapGeometry';
 import { DEFAULT_MAP_ZOOM, DEFAULT_AO_COLOR, VIEWPORT_DEBOUNCE_MS } from '../../config/constants';
+import EventClusterSpider from './EventClusterSpider';
 import styles from '../Dashboard.module.scss';
 
 const MapController = ({ center, triggerFly, userLocation }) => {
@@ -41,8 +42,13 @@ const MapViewportSubscriber = ({ onViewportChange, debounceMs = VIEWPORT_DEBOUNC
 // Round coords to ~11m precision to detect co-located users
 const CLUSTER_PRECISION = 4;
 
-const DashboardMap = ({ center, users, userLocation, onUserClick, liveUpdateIds, onViewportChange, aos = [], onAOCreate, onAOEdit, onAODelete, onAOSelect, featureGroupRef, canManageAOs = false, getCompanyIdentity, fieldEvents = [], onEventClick }) => {
+const DARK_LAYER = { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a>' };
+const SAT_BASE   = { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: '&copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community' };
+const SAT_LABELS = { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', attribution: '' };
+
+const DashboardMap = ({ center, users, userLocation, onUserClick, liveUpdateIds, onViewportChange, aos = [], onAOCreate, onAOEdit, onAODelete, onAOSelect, featureGroupRef, canManageAOs = false, getCompanyIdentity, fieldEvents = [], onEventClick, onEventRespond, respondingIds = new Set() }) => {
   const [flyTrigger, setFlyTrigger] = useState(0);
+  const [isHybrid, setIsHybrid] = useState(false);
   const iconCacheRef = useRef(new Map());
 
   const getCachedIcon = useCallback((key, create) => {
@@ -50,12 +56,14 @@ const DashboardMap = ({ center, users, userLocation, onUserClick, liveUpdateIds,
     return iconCacheRef.current.get(key);
   }, []);
 
-  const getMarkerIcon = useCallback(({ point, className = '', variant = 'pin', isOnline = false, operationalRole = '' }) => {
+  const getMarkerIcon = useCallback(({ point, className = '', variant = 'pin', isOnline = false, operationalRole = '', heading, speed }) => {
     const ao = findAoForPoint(point, aos);
     const identity = ao && getCompanyIdentity ? getCompanyIdentity(ao) : null;
     const color = identity?.color || DEFAULT_AO_COLOR;
     if (variant === 'dot') return getCachedIcon(`self:${className}:${color}`, () => createSelfMarkerIcon({ color, className }));
-    return getCachedIcon(`user:${className}:${color}:${isOnline}:${operationalRole}`, () => createUserMarkerIcon({ color, isOnline, operationalRole, className }));
+    const headingKey = (typeof heading === 'number' && Number.isFinite(heading)) ? snapHeading(heading) : 'n';
+    const speedKey = (typeof speed === 'number' && speed >= 0.5) ? '1' : '0';
+    return getCachedIcon(`user:${className}:${color}:${isOnline}:${operationalRole}:${headingKey}:${speedKey}`, () => createUserMarkerIcon({ color, isOnline, operationalRole, heading, speed, className }));
   }, [aos, getCompanyIdentity, getCachedIcon]);
 
   const aoStrokeStyles = useMemo(() => new Map(aos.map((ao) => {
@@ -76,13 +84,43 @@ const DashboardMap = ({ center, users, userLocation, onUserClick, liveUpdateIds,
     return Array.from(groups.values());
   }, [users]);
 
+  // Group co-located field events into clusters (same precision as user clusters)
+  const eventGroups = useMemo(() => {
+    const groups = new Map();
+    for (const ev of fieldEvents) {
+      const c = ev.coordinates?.coordinates;
+      if (!Array.isArray(c) || c.length !== 2) continue;
+      const [lng, lat] = c;
+      const key = `${lat.toFixed(CLUSTER_PRECISION)},${lng.toFixed(CLUSTER_PRECISION)}`;
+      if (!groups.has(key)) groups.set(key, { lat, lng, events: [] });
+      groups.get(key).events.push(ev);
+    }
+    return Array.from(groups.values());
+  }, [fieldEvents]);
+
   return (
     <div className={styles.mapComponentRoot}>
+      <button onClick={() => setIsHybrid((v) => !v)} aria-label="Toggle satellite view" title={isHybrid ? 'Switch to dark map' : 'Switch to satellite view'} className={`${styles.layerToggleFab}${isHybrid ? ` ${styles.layerToggleFabActive}` : ''}`}>
+        {isHybrid ? (
+          /* Map/vector icon — click to go back to dark */
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>
+        ) : (
+          /* Layers/satellite icon — click to go satellite */
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        )}
+      </button>
       <button onClick={() => { if (isValidCoords(userLocation)) setFlyTrigger((n) => n + 1); }} disabled={!isValidCoords(userLocation)} aria-label="Center map on my location" title="Center on me" className={styles.locateMeFab}>
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
       </button>
       <MapContainer center={center} zoom={DEFAULT_MAP_ZOOM} style={{ height: '100%', width: '100%' }} className="rounded-xl" attributionControl={false}>
-        <TileLayer attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>' url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" />
+        {isHybrid ? (
+          <>
+            <TileLayer key="sat-base" url={SAT_BASE.url} attribution={SAT_BASE.attribution} maxZoom={19} />
+            <TileLayer key="sat-labels" url={SAT_LABELS.url} attribution={SAT_LABELS.attribution} maxZoom={19} />
+          </>
+        ) : (
+          <TileLayer key="dark" attribution={DARK_LAYER.attribution} url={DARK_LAYER.url} />
+        )}
         <MapController center={center} triggerFly={flyTrigger} userLocation={userLocation} />
         <MapViewportSubscriber onViewportChange={onViewportChange} />
         <FeatureGroup ref={featureGroupRef}>
@@ -102,7 +140,7 @@ const DashboardMap = ({ center, users, userLocation, onUserClick, liveUpdateIds,
           if (grp.length === 1) {
             const user = grp[0];
             return (
-              <Marker key={user._id} position={[coords[1], coords[0]]} icon={getMarkerIcon({ point: coords, className: liveUpdateIds.has(user._id) ? 'marker-live-update' : '', variant: 'pin', isOnline: Boolean(user.isOnline || user.online), operationalRole: user.operationalRole || '' })} eventHandlers={{ click: () => onUserClick(user) }}>
+              <Marker key={user._id} position={[coords[1], coords[0]]} icon={getMarkerIcon({ point: coords, className: liveUpdateIds.has(user._id) ? 'marker-live-update' : '', variant: 'pin', isOnline: Boolean(user.isOnline || user.online), operationalRole: user.operationalRole || '', heading: user.heading, speed: user.speed })} eventHandlers={{ click: () => onUserClick(user) }}>
                 <Popup className="marker-popup-dark"><div className="map-popup"><div className="map-popup-header"><span className="map-popup-avatar">{user.name?.charAt(0)?.toUpperCase() || '?'}</span><div><p className="map-popup-name">{user.name}</p>{user.operationalRole && <p className="map-popup-role">{ROLE_LABEL[user.operationalRole] || user.operationalRole}</p>}<p className="map-popup-sub">{user.email}</p></div></div><div className="map-popup-footer"><span className={`map-popup-badge ${(user.isOnline || user.online) ? 'online' : 'offline'}`}>{(user.isOnline || user.online) ? '● ONLINE' : '○ OFFLINE'}</span>{user.distance && <span className="map-popup-dist">{user.distance} km away</span>}</div></div></Popup>
               </Marker>
             );
@@ -145,11 +183,27 @@ const DashboardMap = ({ center, users, userLocation, onUserClick, liveUpdateIds,
             </Marker>
           );
         })}
-        {fieldEvents.map((ev) => { const [lng, lat] = ev.coordinates.coordinates; const cfg = EVENT_TYPE_CONFIG[ev.eventType] || { color: '#6b7280', label: ev.eventType, glyph: '?' }; return (
-          <Marker key={ev._id} position={[lat, lng]} icon={getCachedIcon(`event:${ev.eventType}:${ev.status}`, () => getEventIconCached(ev.eventType, ev.status))} eventHandlers={{ click: () => onEventClick?.(ev) }} zIndexOffset={ev.status === 'ACTIVE' ? 500 : 0}>
-            <Popup className="marker-popup-dark"><div className="map-popup"><div className="map-popup-header"><span className="map-popup-avatar" style={{ backgroundColor: cfg.color, fontSize: '0.75rem', fontWeight: 700 }}>{cfg.glyph}</span><div><p className="map-popup-name">{cfg.label}</p><p className="map-popup-sub">{new Date(ev.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p></div></div><div className="map-popup-footer"><span className={`map-popup-badge ${ev.status === 'ACTIVE' ? 'online' : 'offline'}`}>{ev.status}</span><span className="map-popup-dist">{lat.toFixed(5)}, {lng.toFixed(5)}</span></div></div></Popup>
-          </Marker>
-        ); })}
+        {eventGroups.map(({ lat, lng, events: grp }) => {
+          const position = [lat, lng];
+          if (grp.length === 1) {
+            const ev = grp[0];
+            const cfg = EVENT_TYPE_CONFIG[ev.eventType] || { color: '#6b7280', label: ev.eventType, glyph: '?' };
+            return (
+              <Marker key={ev._id} position={position} icon={getCachedIcon(`event:${ev.eventType}:${ev.status}`, () => getEventIconCached(ev.eventType, ev.status))} eventHandlers={{ click: () => onEventClick?.(ev) }} zIndexOffset={ev.status === 'ACTIVE' ? 500 : 0}>
+                <Popup className="marker-popup-dark"><div className="map-popup"><div className="map-popup-header"><span className="map-popup-avatar" style={{ backgroundColor: cfg.color, fontSize: '0.75rem', fontWeight: 700 }}>{cfg.glyph}</span><div><p className="map-popup-name">{cfg.label}</p><p className="map-popup-sub">{new Date(ev.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</p></div></div><div className="map-popup-footer"><span className={`map-popup-badge ${ev.status === 'ACTIVE' ? 'online' : 'offline'}`}>{ev.status}</span><span className="map-popup-dist">{lat.toFixed(5)}, {lng.toFixed(5)}</span></div></div></Popup>
+              </Marker>
+            );
+          }
+          return (
+            <EventClusterSpider
+              key={`evcluster:${lat.toFixed(CLUSTER_PRECISION)},${lng.toFixed(CLUSTER_PRECISION)}`}
+              events={grp}
+              position={position}
+              onRespond={onEventRespond}
+              respondingIds={respondingIds}
+            />
+          );
+        })}
       </MapContainer>
     </div>
   );

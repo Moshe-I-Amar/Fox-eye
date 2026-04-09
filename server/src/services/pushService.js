@@ -72,4 +72,58 @@ const sendPushForFieldEvent = async (event) => {
   }
 };
 
-module.exports = { sendPushForFieldEvent };
+/**
+ * Send a high-urgency Web Push notification to all users within the
+ * mobilization's targetScope.
+ *
+ * Scope matching mirrors _isInMobilizationScope in socketService:
+ *   - Admins always receive
+ *   - unitId must match; companyId and teamId narrow the target when set
+ */
+const sendPushForMobilization = async (mob) => {
+  if (!initVapid()) return;
+
+  const { targetScope, incidentDescription } = mob;
+
+  // Build scope filter: match subscriptions within the target hierarchy
+  const scopeFilter = { unitId: targetScope.unitId };
+  if (targetScope.companyId) scopeFilter.companyId = targetScope.companyId;
+  if (targetScope.teamId)    scopeFilter.teamId    = targetScope.teamId;
+
+  const subscriptions = await PushSubscription.find({
+    $or: [{ role: 'admin' }, scopeFilter]
+  }).lean();
+
+  if (!subscriptions.length) return;
+
+  const payload = JSON.stringify({
+    title: '⚠ MOBILIZATION ORDER',
+    body: incidentDescription || 'Immediate mobilization — report to rally point',
+    mobilizationId: String(mob._id),
+    type: 'MOBILIZATION'
+  });
+
+  const results = await Promise.allSettled(
+    subscriptions.map((sub) =>
+      webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: sub.keys },
+        payload,
+        { urgency: 'high' }
+      )
+    )
+  );
+
+  const expiredEndpoints = [];
+  results.forEach((result, i) => {
+    if (result.status === 'rejected') {
+      const code = result.reason?.statusCode;
+      if (code === 404 || code === 410) expiredEndpoints.push(subscriptions[i].endpoint);
+    }
+  });
+
+  if (expiredEndpoints.length) {
+    await PushSubscription.deleteMany({ endpoint: { $in: expiredEndpoints } });
+  }
+};
+
+module.exports = { sendPushForFieldEvent, sendPushForMobilization };

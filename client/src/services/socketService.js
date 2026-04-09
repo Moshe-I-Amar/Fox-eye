@@ -208,7 +208,7 @@ class SocketService {
   }
 
   // Socket methods
-  updateLocation(coordinates) {
+  updateLocation(coordinates, { heading, speed } = {}) {
     if (!this.socket || !this.isConnected) {
       throw new Error('Socket not connected');
     }
@@ -218,10 +218,10 @@ class SocketService {
     }
     this.lastLocationEmitAt = now;
 
-    this.socket.emit('location:update', {
-      coordinates,
-      timestamp: new Date().toISOString()
-    });
+    const payload = { coordinates, timestamp: new Date().toISOString() };
+    if (typeof heading === 'number' && Number.isFinite(heading)) payload.heading = heading;
+    if (typeof speed === 'number' && Number.isFinite(speed)) payload.speed = speed;
+    this.socket.emit('location:update', payload);
   }
 
   requestLocation(center, radius = 10, excludeSelf = false) {

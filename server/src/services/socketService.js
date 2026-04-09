@@ -4,6 +4,7 @@ const { LocationService } = require('./locationService');
 const PresenceService = require('./presenceService');
 const ViewportService = require('./viewportService');
 const BreachService = require('./breachService');
+const LocationWriteBuffer = require('../utils/locationWriteBuffer');
 const { buildScopeQuery } = require('../utils/filterByScope');
 
 class SocketService {
@@ -22,6 +23,7 @@ class SocketService {
     this.locationWindowMs = Number(process.env.SOCKET_LOCATION_WINDOW_MS) || 10000;
     this.locationMaxPerWindow = Number(process.env.SOCKET_LOCATION_MAX_PER_WINDOW) || 25;
     this.locationMinIntervalMs = Number(process.env.SOCKET_LOCATION_MIN_INTERVAL_MS) || 400;
+    this.locationBuffer = new LocationWriteBuffer();
     this.setupEventHandlers();
   }
 
@@ -87,7 +89,7 @@ class SocketService {
   }
 
   async handleLocationUpdate(socket, data) {
-    const { coordinates, timestamp } = data;
+    const { coordinates, timestamp, heading, speed } = data;
     if (!this.allowLocationUpdate(socket.id)) {
       socket.emit('error', { message: 'Location update rate limit exceeded' });
       return;
@@ -95,7 +97,11 @@ class SocketService {
 
     const { user, payload } = await this.locationService.updateUserLocation({
       userId: socket.userId,
+      user: socket.userInfo,        // avoids a redundant User.findById() call
+      locationBuffer: this.locationBuffer, // defers DB write to next batch flush
       coordinates,
+      heading: (typeof heading === 'number' && Number.isFinite(heading)) ? heading : undefined,
+      speed: (typeof speed === 'number' && Number.isFinite(speed)) ? speed : undefined,
       timestamp,
       socketService: this,
       excludeSocketId: socket.id
@@ -327,6 +333,58 @@ class SocketService {
 
       if (squadMatch || teamMatch || companyMatch || unitMatch) {
         this.io.to(socketId).emit(socketEvent, payload);
+      }
+    }
+  }
+
+  // ---- Mobilization Broadcasting ----
+
+  /**
+   * Returns true if recipientInfo (from presenceService.userSockets) is within
+   * the mobilization's targetScope. Admins always receive mobilization events.
+   *
+   * @param {object} recipientInfo  — { role, userInfo: { unitId, companyId, teamId } }
+   * @param {object} targetScope    — MobilizationEvent.targetScope
+   */
+  _isInMobilizationScope(recipientInfo, targetScope) {
+    if (!recipientInfo || !targetScope) return false;
+    if (recipientInfo.role === 'admin') return true;
+    const u = recipientInfo.userInfo;
+    if (!u) return false;
+    if (String(u.unitId) !== String(targetScope.unitId)) return false;
+    if (targetScope.companyId && String(u.companyId) !== String(targetScope.companyId)) return false;
+    if (targetScope.teamId    && String(u.teamId)    !== String(targetScope.teamId))    return false;
+    return true;
+  }
+
+  /**
+   * Broadcast mobilization:activated to all in-scope sockets.
+   * Called immediately after the DB document is created.
+   */
+  broadcastMobilizationActivated(mob) {
+    const payload = {
+      mobilization: mob.toObject ? mob.toObject() : mob,
+      timestamp: new Date().toISOString()
+    };
+    for (const [socketId, info] of this.presenceService.getUserSocketEntries()) {
+      if (this._isInMobilizationScope(info, mob.targetScope)) {
+        this.io.to(socketId).emit('mobilization:activated', payload);
+      }
+    }
+  }
+
+  /**
+   * Broadcast a mobilization state change (phase advance or stand-down) to
+   * all in-scope sockets using the supplied eventName.
+   */
+  broadcastMobilizationUpdate(mob, eventName) {
+    const payload = {
+      mobilization: mob.toObject ? mob.toObject() : mob,
+      timestamp: new Date().toISOString()
+    };
+    for (const [socketId, info] of this.presenceService.getUserSocketEntries()) {
+      if (this._isInMobilizationScope(info, mob.targetScope)) {
+        this.io.to(socketId).emit(eventName, payload);
       }
     }
   }
