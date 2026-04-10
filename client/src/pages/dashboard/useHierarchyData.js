@@ -4,6 +4,7 @@ import { hierarchyService } from '../../services/hierarchyApi';
 const useHierarchyData = () => {
   const [hierarchyMap, setHierarchyMap] = useState({ units: {}, companies: {}, teams: {}, squads: {} });
   const [companyOptions, setCompanyOptions] = useState([]);
+  const [teamOptions,    setTeamOptions]    = useState([]);
 
   useEffect(() => {
     let active = true;
@@ -16,11 +17,12 @@ const useHierarchyData = () => {
       (data.squads || []).forEach((s) => { squads[s._id] = s.name; });
       setHierarchyMap({ units, companies, teams, squads });
       setCompanyOptions(data.companies || []);
+      setTeamOptions(data.teams || []);
     }).catch(() => {});
     return () => { active = false; };
   }, []);
 
-  return { hierarchyMap, companyOptions };
+  return { hierarchyMap, companyOptions, teamOptions };
 };
 
 export default useHierarchyData;

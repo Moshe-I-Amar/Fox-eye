@@ -22,10 +22,14 @@ import useAOHandlers from './dashboard/useAOHandlers';
 import useHierarchyData from './dashboard/useHierarchyData';
 import useLocationTracking from './dashboard/useLocationTracking';
 import useDashboardSocket from './dashboard/useDashboardSocket';
+import useMobilization from '../hooks/useMobilization';
+import MobilizationModal, { MOBILIZE_ROLES } from './dashboard/MobilizationModal';
 import { DEFAULT_MAP_CENTER, DEFAULT_SEARCH_RADIUS_KM } from '../config/constants';
 
 const Dashboard = () => {
   const [sidebarOpen,        setSidebarOpen]        = useState(false);
+  const [mobilizeModalOpen,  setMobilizeModalOpen]  = useState(false);
+  const [rallyPointDraft,    setRallyPointDraft]    = useState(null);
   const [users,              setUsers]              = useState([]);
   const [loading,            setLoading]            = useState(true);
   const [selectedUser,       setSelectedUser]       = useState(null);
@@ -47,12 +51,14 @@ const Dashboard = () => {
   const canManageAOs = currentUser?.role === 'admin' || currentUser?.operationalRole === 'COMPANY_COMMANDER';
   const canViewViolations = currentUser?.role === 'admin' || ['HQ', 'UNIT_COMMANDER'].includes(currentUser?.operationalRole);
   const { violations, loading: violationLoading, error: violationError } = useViolations(canViewViolations, violationFilters);
+  const canMobilize = currentUser?.role === 'admin' || MOBILIZE_ROLES.includes(currentUser?.operationalRole || '');
   const { events: fieldEvents, loading: fieldEventsLoading } = useFieldEvents(50);
-  const { hierarchyMap, companyOptions } = useHierarchyData();
+  const { hierarchyMap, companyOptions, teamOptions } = useHierarchyData();
   const aoHandlers = useAOHandlers({ setAos, fetchAOs, setAoError, companyOptions, currentUser });
 
   const onConnect = useCallback(() => { socketService.subscribeToPresence(); socketInitializedRef.current = true; }, []);
   const { realtimeEnabled, realtimeStatus, realtimeNotice, realtimeNoticeTone, clearRealtimeNotice } = useSocketConnection({ navigate, onConnect });
+  const { activeMobilization, loading: mobilizationLoading, sending: mobilizationSending, error: mobilizationError, trigger: triggerMobilization, advanceStatus: advanceMobilizationStatus, standDown: standDownMobilization } = useMobilization({ realtimeEnabled });
   useEffect(() => { realtimeEnabledRef.current = realtimeEnabled; }, [realtimeEnabled]);
   useEffect(() => { fetchAOs(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (!eventAlert?.autoDismiss) return; const t = setTimeout(() => setEventAlert(null), 8000); return () => clearTimeout(t); }, [eventAlert]);
@@ -106,6 +112,17 @@ const Dashboard = () => {
     return { visibleEvents: visible, activeEventCount: active };
   }, [fieldEvents, showResolvedEvents]);
 
+  const handleSetRallyPoint   = useCallback((draft) => setRallyPointDraft(draft), []);
+  const handleClearRallyPoint = useCallback(() => setRallyPointDraft(null), []);
+
+  const handleMobilizationConfirm = useCallback(async (payload) => {
+    try {
+      await triggerMobilization(payload);
+      setMobilizeModalOpen(false);
+      setRallyPointDraft(null); // clear draft after successful mobilization
+    } catch {}
+  }, [triggerMobilization]);
+
   const handleEventRespond = useCallback(async (id, action) => {
     setRespondingIds((prev) => new Set([...prev, id]));
     try {
@@ -131,15 +148,17 @@ const Dashboard = () => {
           aos={aos} aoLoading={aoLoading} aoError={aoError} canManageAOs={canManageAOs} getCompanyIdentity={getCompanyIdentity} onSelectAO={aoHandlers.handleAOSelect} onToggleAOActive={aoHandlers.handleToggleAOActive} onDeleteAO={aoHandlers.handleAODirectDelete}
           visibleEvents={visibleEvents} activeEventCount={activeEventCount} fieldEventsLoading={fieldEventsLoading} showResolvedEvents={showResolvedEvents} onToggleResolved={setShowResolvedEvents} respondingIds={respondingIds} onRespond={handleEventRespond} onFocusEvent={(ev) => { const c = normalizeCoords(ev?.coordinates?.coordinates); if (c) setMapCenter(c); }}
           canViewViolations={canViewViolations} violations={violations} violationLoading={violationLoading} violationError={violationError} violationFilters={violationFilters} onViolationFilterChange={setViolationFilters} companyOptions={companyOptions} hierarchyMap={hierarchyMap} onFocusViolation={(v) => { const c = normalizeCoords(v?.coordinates); if (c) setMapCenter(c); }}
+          canMobilize={canMobilize} activeMobilization={activeMobilization} mobilizationLoading={mobilizationLoading} mobilizationSending={mobilizationSending} mobilizationError={mobilizationError} onOpenMobilizeModal={() => setMobilizeModalOpen(true)} onAdvanceMobilization={advanceMobilizationStatus} onStandDownMobilization={standDownMobilization}
         />
         <div className="flex-1 min-h-0 p-4 lg:p-6">
           <Card className="h-full p-0">
-            <DashboardMap center={mapCenter} users={users} userLocation={userLocation} onUserClick={setSelectedUser} liveUpdateIds={liveUpdateIds} onViewportChange={useCallback((vp) => setViewportBounds(vp), [])} aos={aos} onAOCreate={aoHandlers.handleAOCreate} onAOEdit={aoHandlers.handleAOEdit} onAODelete={aoHandlers.handleAODelete} onAOSelect={aoHandlers.handleAOSelect} featureGroupRef={aoHandlers.featureGroupRef} canManageAOs={canManageAOs} getCompanyIdentity={getCompanyIdentity} fieldEvents={visibleEvents} onEventClick={(ev) => { const c = normalizeCoords(ev?.coordinates?.coordinates); if (c) setMapCenter(c); }} onEventRespond={handleEventRespond} respondingIds={respondingIds} />
+            <DashboardMap center={mapCenter} users={users} userLocation={userLocation} onUserClick={setSelectedUser} liveUpdateIds={liveUpdateIds} onViewportChange={useCallback((vp) => setViewportBounds(vp), [])} aos={aos} onAOCreate={aoHandlers.handleAOCreate} onAOEdit={aoHandlers.handleAOEdit} onAODelete={aoHandlers.handleAODelete} onAOSelect={aoHandlers.handleAOSelect} featureGroupRef={aoHandlers.featureGroupRef} canManageAOs={canManageAOs} getCompanyIdentity={getCompanyIdentity} fieldEvents={visibleEvents} onEventClick={(ev) => { const c = normalizeCoords(ev?.coordinates?.coordinates); if (c) setMapCenter(c); }} onEventRespond={handleEventRespond} respondingIds={respondingIds} rallyPointDraft={rallyPointDraft} onSetRallyPoint={handleSetRallyPoint} onClearRallyPoint={handleClearRallyPoint} canMobilize={canMobilize} />
           </Card>
         </div>
       </div>
       <AOModal isOpen={aoHandlers.isAoModalOpen} mode={aoHandlers.aoModalMode} aoForm={aoHandlers.aoForm} aoNameError={aoHandlers.aoNameError} aoIconError={aoHandlers.aoIconError} aoSaving={aoHandlers.aoSaving} visibleCompanies={aoHandlers.visibleCompanies} currentUserRole={currentUser?.role} onClose={aoHandlers.handleAOCancel} onChange={(patch) => aoHandlers.setAoForm((prev) => ({ ...prev, ...patch }))} onSubmit={aoHandlers.handleAOSubmit} />
       <UserDetailModal user={selectedUser} hierarchyMap={hierarchyMap} onClose={() => setSelectedUser(null)} />
+      <MobilizationModal isOpen={mobilizeModalOpen} onClose={() => setMobilizeModalOpen(false)} onConfirm={handleMobilizationConfirm} sending={mobilizationSending} currentUser={currentUser} companyOptions={companyOptions} teamOptions={teamOptions} rallyPointDraft={rallyPointDraft} onClearRallyPoint={handleClearRallyPoint} />
     </div>
   );
 };

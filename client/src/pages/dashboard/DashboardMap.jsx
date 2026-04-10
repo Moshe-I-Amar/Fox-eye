@@ -1,6 +1,8 @@
 import React, { useCallback, useRef, useMemo, useState, useEffect } from 'react';
+import L from 'leaflet';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents, FeatureGroup, Polygon } from 'react-leaflet';
 import { EditControl } from 'react-leaflet-draw';
+import RallyPointSearch from './RallyPointSearch';
 import { isValidCoords, safeGetCoords } from '../../utils/location';
 import {
   sanitizeColor, isImageUrl, ROLE_LABEL,
@@ -13,13 +15,60 @@ import { DEFAULT_MAP_ZOOM, DEFAULT_AO_COLOR, VIEWPORT_DEBOUNCE_MS } from '../../
 import EventClusterSpider from './EventClusterSpider';
 import styles from '../Dashboard.module.scss';
 
-const MapController = ({ center, triggerFly, userLocation }) => {
+const MapController = ({ center, triggerFly, userLocation, flyToTarget }) => {
   const map = useMap();
   useEffect(() => { if (isValidCoords(center)) map.setView(center, map.getZoom()); }, [center, map]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (isValidCoords(userLocation)) map.flyTo(userLocation, 16, { animate: true, duration: 0.8 }); }, [triggerFly]);
+  useEffect(() => {
+    if (!flyToTarget) return;
+    // flyToTarget is [lng, lat] (GeoJSON) — Leaflet needs [lat, lng]
+    map.flyTo([flyToTarget[1], flyToTarget[0]], Math.max(map.getZoom(), 14), { animate: true, duration: 0.9 });
+  }, [flyToTarget, map]);
   return null;
 };
+
+// ── Rally point click capture ─────────────────────────────────────────────────
+// Must live inside <MapContainer> to access the Leaflet context.
+const RallyPointPickerHandler = ({ active, onPick }) => {
+  const map = useMap();
+
+  useEffect(() => {
+    const container = map.getContainer();
+    container.style.cursor = active ? 'crosshair' : '';
+    return () => { container.style.cursor = ''; };
+  }, [active, map]);
+
+  useMapEvents({
+    click(e) {
+      if (!active) return;
+      onPick({ coordinates: [e.latlng.lng, e.latlng.lat], name: null });
+    },
+  });
+  return null;
+};
+
+// ── Rally point DivIcon ───────────────────────────────────────────────────────
+const createRallyPointIcon = () => L.divIcon({
+  html: `
+    <div style="position:relative;width:32px;height:44px;">
+      <svg viewBox="0 0 32 44" width="32" height="44" xmlns="http://www.w3.org/2000/svg" overflow="visible">
+        <circle cx="16" cy="16" r="14" fill="rgba(239,68,68,0.18)">
+          <animate attributeName="r" values="14;20;14" dur="1.8s" repeatCount="indefinite"/>
+          <animate attributeName="fill-opacity" values="0.18;0;0.18" dur="1.8s" repeatCount="indefinite"/>
+        </circle>
+        <path d="M16 2C10.48 2 6 6.48 6 12c0 7.5 10 22 10 22S26 19.5 26 12c0-5.52-4.48-10-10-10z"
+              fill="#ef4444" stroke="#b91c1c" stroke-width="1.5"/>
+        <circle cx="16" cy="12" r="3.5" fill="white" opacity="0.95"/>
+        <line x1="16" y1="7" x2="16" y2="17" stroke="#b91c1c" stroke-width="1.5" stroke-linecap="round"/>
+        <line x1="11" y1="12" x2="21" y2="12" stroke="#b91c1c" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </div>`,
+  className: '',
+  iconSize:    [32, 44],
+  iconAnchor:  [16, 44],
+  popupAnchor: [0, -46],
+});
 
 const MapViewportSubscriber = ({ onViewportChange, debounceMs = VIEWPORT_DEBOUNCE_MS }) => {
   const map = useMap();
@@ -46,10 +95,30 @@ const DARK_LAYER = { url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y
 const SAT_BASE   = { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', attribution: '&copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community' };
 const SAT_LABELS = { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', attribution: '' };
 
-const DashboardMap = ({ center, users, userLocation, onUserClick, liveUpdateIds, onViewportChange, aos = [], onAOCreate, onAOEdit, onAODelete, onAOSelect, featureGroupRef, canManageAOs = false, getCompanyIdentity, fieldEvents = [], onEventClick, onEventRespond, respondingIds = new Set() }) => {
-  const [flyTrigger, setFlyTrigger] = useState(0);
-  const [isHybrid, setIsHybrid] = useState(false);
-  const iconCacheRef = useRef(new Map());
+const DashboardMap = ({
+  center, users, userLocation, onUserClick, liveUpdateIds, onViewportChange,
+  aos = [], onAOCreate, onAOEdit, onAODelete, onAOSelect, featureGroupRef,
+  canManageAOs = false, getCompanyIdentity,
+  fieldEvents = [], onEventClick, onEventRespond, respondingIds = new Set(),
+  // Rally point picker
+  rallyPointDraft, onSetRallyPoint, onClearRallyPoint, canMobilize = false,
+}) => {
+  const [flyTrigger,     setFlyTrigger]     = useState(0);
+  const [flyToTarget,    setFlyToTarget]    = useState(null);
+  const [isHybrid,       setIsHybrid]       = useState(false);
+  const [rpPickerActive, setRpPickerActive] = useState(false);
+  const iconCacheRef     = useRef(new Map());
+  const rpIconRef        = useRef(null);
+
+  const getRpIcon = useCallback(() => {
+    if (!rpIconRef.current) rpIconRef.current = createRallyPointIcon();
+    return rpIconRef.current;
+  }, []);
+
+  const handleSetRallyPoint = useCallback((draft) => {
+    onSetRallyPoint?.(draft);
+    setRpPickerActive(false);
+  }, [onSetRallyPoint]);
 
   const getCachedIcon = useCallback((key, create) => {
     if (!iconCacheRef.current.has(key)) iconCacheRef.current.set(key, create());
@@ -100,6 +169,17 @@ const DashboardMap = ({ center, users, userLocation, onUserClick, liveUpdateIds,
 
   return (
     <div className={styles.mapComponentRoot}>
+      {/* ── Geocoding search + RP badge overlay (outside MapContainer) ── */}
+      <RallyPointSearch
+        aos={aos}
+        onSelect={handleSetRallyPoint}
+        onFlyTo={setFlyToTarget}
+        rallyPointDraft={rallyPointDraft}
+        onClear={onClearRallyPoint}
+        canMobilize={canMobilize}
+        rpPickerActive={rpPickerActive}
+        onTogglePicker={() => setRpPickerActive((v) => !v)}
+      />
       <button onClick={() => setIsHybrid((v) => !v)} aria-label="Toggle satellite view" title={isHybrid ? 'Switch to dark map' : 'Switch to satellite view'} className={`${styles.layerToggleFab}${isHybrid ? ` ${styles.layerToggleFabActive}` : ''}`}>
         {isHybrid ? (
           /* Map/vector icon — click to go back to dark */
@@ -121,8 +201,9 @@ const DashboardMap = ({ center, users, userLocation, onUserClick, liveUpdateIds,
         ) : (
           <TileLayer key="dark" attribution={DARK_LAYER.attribution} url={DARK_LAYER.url} />
         )}
-        <MapController center={center} triggerFly={flyTrigger} userLocation={userLocation} />
+        <MapController center={center} triggerFly={flyTrigger} userLocation={userLocation} flyToTarget={flyToTarget} />
         <MapViewportSubscriber onViewportChange={onViewportChange} />
+        <RallyPointPickerHandler active={rpPickerActive} onPick={handleSetRallyPoint} />
         <FeatureGroup ref={featureGroupRef}>
           {canManageAOs && <EditControl position="topright" onCreated={onAOCreate} onEdited={onAOEdit} onDeleted={onAODelete} draw={{ polygon: { allowIntersection: false, showArea: false, shapeOptions: { color: DEFAULT_AO_COLOR, weight: 2, fillOpacity: 0.2 } }, polyline: false, rectangle: false, circle: false, circlemarker: false, marker: false }} edit={{ edit: { selectedPathOptions: { color: DEFAULT_AO_COLOR, fillOpacity: 0.25 } }, remove: true }} />}
           {aos.map((ao) => (
@@ -131,6 +212,35 @@ const DashboardMap = ({ center, users, userLocation, onUserClick, liveUpdateIds,
             </Polygon>
           ))}
         </FeatureGroup>
+        {/* ── Rally point marker ── */}
+        {rallyPointDraft?.coordinates && (
+          <Marker
+            position={[rallyPointDraft.coordinates[1], rallyPointDraft.coordinates[0]]}
+            icon={getRpIcon()}
+            zIndexOffset={1000}
+          >
+            <Popup className="marker-popup-dark">
+              <div className="map-popup">
+                <div className="map-popup-header">
+                  <span className="map-popup-avatar" style={{ background: '#7f1d1d', color: '#fca5a5', fontSize: '0.7rem', fontWeight: 700 }}>RP</span>
+                  <div>
+                    <p className="map-popup-name">{rallyPointDraft.name || 'Rally Point'}</p>
+                    <p className="map-popup-sub">
+                      {rallyPointDraft.coordinates[1].toFixed(5)}, {rallyPointDraft.coordinates[0].toFixed(5)}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={onClearRallyPoint}
+                  className="mt-2 w-full text-center text-xs text-red-400/70 hover:text-red-400 transition-colors py-1 border border-red-500/20 rounded"
+                >
+                  Clear Rally Point
+                </button>
+              </div>
+            </Popup>
+          </Marker>
+        )}
         {isValidCoords(userLocation) && (
           <Marker position={userLocation} icon={getMarkerIcon({ point: [userLocation[1], userLocation[0]], variant: 'dot' })}>
             <Popup className="marker-popup-dark"><div className="map-popup"><div className="map-popup-header"><span className="map-popup-avatar self"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></span><div><p className="map-popup-name">You</p><p className="map-popup-sub">{userLocation[0].toFixed(5)}, {userLocation[1].toFixed(5)}</p></div></div><span className="map-popup-badge online">● LIVE</span></div></Popup>

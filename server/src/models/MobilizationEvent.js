@@ -38,13 +38,16 @@ const mobilizationEventSchema = new mongoose.Schema(
     rallyPoint: {
       type: {
         type: String,
-        enum: ['Point'],
-        default: 'Point'
+        enum: ['Point']
+        // No default — prevents Mongoose creating { type: 'Point', coordinates: [] }
+        // when the field is omitted, which would trip the coordinates validator.
       },
       coordinates: {
         type: [Number],
         validate: {
           validator(coords) {
+            // Allow absent / empty (field was not provided)
+            if (!coords || coords.length === 0) return true;
             return (
               coords.length === 2 &&
               coords[0] >= -180 && coords[0] <= 180 &&

@@ -251,11 +251,11 @@ const validateMobilizationCreate = [
     .isMongoId()
     .withMessage('targetScope.unitId is required and must be a valid Mongo ID'),
   body('targetScope.companyId')
-    .optional({ nullable: true })
+    .optional({ nullable: true, checkFalsy: true })
     .isMongoId()
     .withMessage('targetScope.companyId must be a valid Mongo ID'),
   body('targetScope.teamId')
-    .optional({ nullable: true })
+    .optional({ nullable: true, checkFalsy: true })
     .isMongoId()
     .withMessage('targetScope.teamId must be a valid Mongo ID'),
   body('incidentDescription')
