@@ -6,6 +6,7 @@ import useFieldEvents  from '../../hooks/useFieldEvents';
 import useAOs          from '../../hooks/useAOs';
 import useViolations   from '../../hooks/useViolations';
 import { useAuth }     from '../../context/AuthContext';
+import { eventApi }    from '../../services/eventApi';
 import MobileLayout    from './MobileLayout';
 import MobileFieldMap  from './MobileFieldMap';
 import MobileEventFeed from './MobileEventFeed';
@@ -26,6 +27,7 @@ const MobileFieldView = () => {
           refetch: refetchEvents, updateEvent }                            = useFieldEvents(25);
   const { error: aoError, refetch: fetchAOs }                             = useAOs();
   const { violations }                                                     = useViolations(true, {}, 10);
+  const [respondingIds, setRespondingIds]                                  = useState(new Set());
 
   useEffect(() => { fetchAOs(); }, [fetchAOs]);
 
@@ -86,19 +88,29 @@ const MobileFieldView = () => {
     if (!navigator.geolocation) { setGpsStatus('unavailable'); return; }
     setGpsStatus('searching');
     const id = navigator.geolocation.watchPosition(
-      (pos) => { const c = [pos.coords.longitude, pos.coords.latitude]; setUserCoords(c); setGpsStatus('locked'); try { socketService.updateLocation(c); } catch (_) {} },
+      (pos) => { const c = [pos.coords.longitude, pos.coords.latitude]; setUserCoords(c); setGpsStatus('locked'); try { socketService.updateLocation(c, { heading: pos.coords.heading, speed: pos.coords.speed }); } catch (_) {} },
       (err) => setGpsStatus(err.code === 1 ? 'unavailable' : 'searching'),
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
     );
     return () => navigator.geolocation.clearWatch(id);
   }, []);
 
+  const handleEventRespond = useCallback(async (id, action) => {
+    setRespondingIds((prev) => new Set([...prev, id]));
+    try {
+      const updated = await (action === 'acknowledge' ? eventApi.acknowledgeEvent(id) : eventApi.resolveEvent(id));
+      if (updated) updateEvent(id, updated);
+    } catch {} finally {
+      setRespondingIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
+    }
+  }, [updateEvent]);
+
   const handleBack      = useCallback(() => navigate('/dashboard'), [navigate]);
   const handleShowOnMap = useCallback((coords) => setMapFocusCoords(coords), []);
 
   return (
     <MobileLayout
-      mapSlot={<MobileFieldMap userCoordinates={userCoords} events={events} focusCoords={mapFocusCoords} onFocusConsumed={() => setMapFocusCoords(null)} showZoomControl={window.innerWidth >= 768} gpsStatus={gpsStatus} />}
+      mapSlot={<MobileFieldMap userCoordinates={userCoords} events={events} focusCoords={mapFocusCoords} onFocusConsumed={() => setMapFocusCoords(null)} showZoomControl={window.innerWidth >= 768} gpsStatus={gpsStatus} onEventRespond={handleEventRespond} respondingIds={respondingIds} />}
       user={user} connectionStatus={connectionStatus} gpsStatus={gpsStatus} wakeLockStatus={wakeLockStatus}
       violations={activeViolationCount} userCoordinates={userCoords} onQueueEvent={enqueue} queuedCount={queue.length}
       feedSlot={<MobileEventFeed events={events} loading={eventsLoading} error={eventsError} refetch={refetchEvents} onShowOnMap={handleShowOnMap} onEventUpdate={updateEvent} />}

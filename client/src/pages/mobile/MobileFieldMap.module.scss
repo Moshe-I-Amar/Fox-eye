@@ -54,6 +54,33 @@
   @apply w-1.5 h-1.5 rounded-full bg-emerald-400;
 }
 
+// ── Layer toggle FAB ──────────────────────────────────────────────────────────
+.layerToggleFab {
+  @apply absolute right-4 z-[100];
+  @apply w-11 h-11 rounded-full;
+  @apply flex items-center justify-center;
+  @apply bg-charcoal/90 border border-gold/40 text-gold;
+  @apply shadow-gold-glow backdrop-blur-sm;
+  @apply transition-all duration-150;
+  bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px) + 1rem + 3.25rem);
+
+  &:hover {
+    @apply bg-slate-dark;
+  }
+
+  &:active {
+    @apply scale-95;
+  }
+}
+
+.layerToggleFabActive {
+  @apply bg-gold text-jet border-gold;
+
+  &:hover {
+    @apply bg-gold/80 text-jet;
+  }
+}
+
 // ── Locate-me FAB ─────────────────────────────────────────────────────────────
 .locateMeFab {
   @apply absolute right-4 z-[100];

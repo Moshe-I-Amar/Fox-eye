@@ -41,14 +41,37 @@ export const ROLE_LABEL = {
   TEAM_LEADER: 'Team Leader', TEAM_COMMANDER: 'Team Commander', SQUAD_COMMANDER: 'Squad Commander',
 };
 
+// ── Bearing helpers ────────────────────────────────────────────────────────────
+// Minimum speed (m/s) below which heading is treated as unavailable
+const BEARING_MIN_SPEED = 0.5;
+// Round heading to nearest N degrees to cap cache size (72 slots at 5°)
+const BEARING_SNAP_DEG = 5;
+
+export const snapHeading = (heading) =>
+  Math.round(heading / BEARING_SNAP_DEG) * BEARING_SNAP_DEG % 360;
+
+/**
+ * Returns a bearing arrow SVG group string if conditions are met, else ''.
+ * The arrow points in the direction of travel; rotated around the pin circle center (19,19).
+ */
+export const buildBearingArrow = (heading, speed) => {
+  if (typeof heading !== 'number' || !Number.isFinite(heading)) return '';
+  if (typeof speed === 'number' && Number.isFinite(speed) && speed < BEARING_MIN_SPEED) return '';
+  const deg = snapHeading(heading);
+  // Small white arrowhead sitting just outside the top of the pin circle (r≈13, center 19,19)
+  // At deg=0 it points North; rotated clockwise by deg around the circle center
+  return `<g transform="rotate(${deg},19,19)"><polygon points="19,2 15.5,8.5 22.5,8.5" fill="white" fill-opacity="0.95" stroke="rgba(0,0,0,0.35)" stroke-width="0.8" stroke-linejoin="round"/></g>`;
+};
+
 // ── SVG builders ──────────────────────────────────────────────────────────────
-export const buildUserPinSvg = ({ color, isOnline, operationalRole }) => {
+export const buildUserPinSvg = ({ color, isOnline, operationalRole, heading, speed }) => {
   const c = sanitizeColor(color);
   const roleMarkup = ROLE_ICON[operationalRole] ?? `<circle cx="19" cy="14" r="5.5" fill="white" fill-opacity="0.95"/><path d="M7 29 C7 21 31 21 31 29" fill="white" fill-opacity="0.95"/>`;
   const dot = isOnline
     ? `<circle cx="29" cy="8" r="4.5" fill="#34d399" stroke="${c}" stroke-width="2"/>`
     : `<circle cx="29" cy="8" r="4.5" fill="#4b5563" stroke="${c}" stroke-width="2"/>`;
-  return `<svg width="26" height="34" viewBox="0 0 38 48" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><filter id="ps" x="-30%" y="-20%" width="160%" height="160%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="rgba(0,0,0,0.55)"/></filter></defs><path d="M19 2 C9 2 1 10 1 20 C1 30 19 46 19 46 C19 46 37 30 37 20 C37 10 29 2 19 2Z" fill="${c}" filter="url(#ps)"/><circle cx="19" cy="19" r="13" fill="rgba(0,0,0,0.28)"/>${roleMarkup}${dot}</svg>`;
+  const arrow = buildBearingArrow(heading, speed);
+  return `<svg width="26" height="34" viewBox="0 0 38 48" fill="none" xmlns="http://www.w3.org/2000/svg"><defs><filter id="ps" x="-30%" y="-20%" width="160%" height="160%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="rgba(0,0,0,0.55)"/></filter></defs><path d="M19 2 C9 2 1 10 1 20 C1 30 19 46 19 46 C19 46 37 30 37 20 C37 10 29 2 19 2Z" fill="${c}" filter="url(#ps)"/><circle cx="19" cy="19" r="13" fill="rgba(0,0,0,0.28)"/>${arrow}${roleMarkup}${dot}</svg>`;
 };
 
 export const buildSelfDotSvg = ({ color }) => {
@@ -86,8 +109,8 @@ export const buildEventMarkerSvg = ({ eventType, status }) => {
 };
 
 // ── Leaflet Icon factories ────────────────────────────────────────────────────
-export const createUserMarkerIcon = ({ color, isOnline = false, operationalRole = '', className = '' }) =>
-  new Icon({ iconUrl: svgToDataUrl(buildUserPinSvg({ color, isOnline, operationalRole })), iconSize: [26, 34], iconAnchor: [13, 33], popupAnchor: [0, -34], className });
+export const createUserMarkerIcon = ({ color, isOnline = false, operationalRole = '', heading, speed, className = '' }) =>
+  new Icon({ iconUrl: svgToDataUrl(buildUserPinSvg({ color, isOnline, operationalRole, heading, speed })), iconSize: [26, 34], iconAnchor: [13, 33], popupAnchor: [0, -34], className });
 
 export const createSelfMarkerIcon = ({ color, className = '' }) =>
   new Icon({ iconUrl: svgToDataUrl(buildSelfDotSvg({ color })), iconSize: [32, 32], iconAnchor: [16, 16], popupAnchor: [0, -20], className });

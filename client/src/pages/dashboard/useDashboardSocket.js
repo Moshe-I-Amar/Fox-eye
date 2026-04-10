@@ -31,8 +31,9 @@ const useDashboardSocket = ({ realtimeEnabled, mapCenter, userLocation, currentU
       const distCenter = isValidCoords(userLocation) ? userLocation : mapCenter;
       const loc = { type: 'Point', coordinates: [lng, lat] };
       const ts = data.timestamp || new Date().toISOString();
-      setUsers((prev) => { const i = prev.findIndex((u) => u._id === data.userId); if (i === -1) return prev; const next = [...prev]; next[i] = { ...next[i], location: loc, distance: calculateDistance(distCenter, [lat, lng]), lastUpdateAt: ts }; return next; });
-      setSelectedUser((prev) => prev?._id === data.userId ? { ...prev, location: loc, distance: calculateDistance(distCenter, [lat, lng]), lastUpdateAt: ts } : prev);
+      const bearing = { heading: data.heading ?? null, speed: data.speed ?? null };
+      setUsers((prev) => { const i = prev.findIndex((u) => u._id === data.userId); if (i === -1) return prev; const next = [...prev]; next[i] = { ...next[i], location: loc, distance: calculateDistance(distCenter, [lat, lng]), lastUpdateAt: ts, ...bearing }; return next; });
+      setSelectedUser((prev) => prev?._id === data.userId ? { ...prev, location: loc, distance: calculateDistance(distCenter, [lat, lng]), lastUpdateAt: ts, ...bearing } : prev);
       markLiveUpdate(data.userId);
       setOnlineUsers((prev) => new Set([...prev, data.userId]));
     };

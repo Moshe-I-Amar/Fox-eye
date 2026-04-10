@@ -3,6 +3,7 @@ import Card from '../../components/ui/Card';
 import AOPanel from './AOPanel';
 import FieldEventsPanel from './FieldEventsPanel';
 import ViolationsPanel from './ViolationsPanel';
+import MobilizationPanel from './MobilizationPanel';
 
 const DashboardSidebar = ({
   isOpen, realtimeEnabled, users, loading, radius, locationLoading, locationError,
@@ -12,6 +13,8 @@ const DashboardSidebar = ({
   respondingIds, onRespond, onFocusEvent,
   canViewViolations, violations, violationLoading, violationError, violationFilters,
   onViolationFilterChange, companyOptions, hierarchyMap, onFocusViolation,
+  canMobilize, activeMobilization, mobilizationLoading, mobilizationSending, mobilizationError,
+  onOpenMobilizeModal, onAdvanceMobilization, onStandDownMobilization,
 }) => (
   <div className={`${isOpen ? 'flex' : 'hidden'} lg:flex w-full lg:w-80 glass-card border-b lg:border-b-0 lg:border-r border-gold/20 p-6 overflow-hidden flex-col lg:h-full max-h-[60vh] lg:max-h-none`}>
     <div className="flex items-center justify-between mb-6">
@@ -35,6 +38,16 @@ const DashboardSidebar = ({
       </div>
     </Card>
 
+    <MobilizationPanel
+      canMobilize={canMobilize}
+      activeMobilization={activeMobilization}
+      mobilizationLoading={mobilizationLoading}
+      mobilizationSending={mobilizationSending}
+      mobilizationError={mobilizationError}
+      onOpenModal={onOpenMobilizeModal}
+      onAdvance={onAdvanceMobilization}
+      onStandDown={onStandDownMobilization}
+    />
     <AOPanel aos={aos} aoLoading={aoLoading} aoError={aoError} canManageAOs={canManageAOs} getCompanyIdentity={getCompanyIdentity} onSelectAO={onSelectAO} onToggleAOActive={onToggleAOActive} onDeleteAO={onDeleteAO} />
     <FieldEventsPanel visibleEvents={visibleEvents} activeEventCount={activeEventCount} fieldEventsLoading={fieldEventsLoading} showResolvedEvents={showResolvedEvents} onToggleResolved={onToggleResolved} respondingIds={respondingIds} onRespond={onRespond} onFocusEvent={onFocusEvent} />
     {canViewViolations && <ViolationsPanel violations={violations} violationLoading={violationLoading} violationError={violationError} violationFilters={violationFilters} onFilterChange={(patch) => onViolationFilterChange((prev) => ({ ...prev, ...patch }))} companyOptions={companyOptions} hierarchyMap={hierarchyMap} onFocusViolation={onFocusViolation} />}
