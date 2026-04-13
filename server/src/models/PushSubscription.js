@@ -14,11 +14,17 @@ const pushSubscriptionSchema = new mongoose.Schema(
     companyId: { type: mongoose.Schema.Types.ObjectId },
     teamId:    { type: mongoose.Schema.Types.ObjectId },
     squadId:   { type: mongoose.Schema.Types.ObjectId },
+    // Expo push (mobile) — mutually exclusive with VAPID keys
+    platform:   { type: String, enum: ['web', 'expo'], default: 'web' },
+    expoToken:  { type: String, default: null },
   },
   { timestamps: true }
 );
 
 pushSubscriptionSchema.index({ userId: 1 });
-pushSubscriptionSchema.index({ endpoint: 1 }, { unique: true });
+// endpoint unique per platform (expo rows have no endpoint)
+pushSubscriptionSchema.index({ endpoint: 1, platform: 1 }, { unique: true, sparse: true });
+// expoToken globally unique (one device = one subscription)
+pushSubscriptionSchema.index({ expoToken: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.model('PushSubscription', pushSubscriptionSchema);

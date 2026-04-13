@@ -68,6 +68,11 @@ exports.advanceStatus = asyncHandler(async (req, res) => {
     console.warn('[mobilizationController] socket broadcast failed:', err.message);
   }
 
+  // Push — non-blocking; notify in-scope users of phase change
+  sendPushForMobilization(mob).catch((err) => {
+    console.warn('[mobilizationController] push notification failed:', err.message);
+  });
+
   res.json({ success: true, data: { mobilization: mob } });
 });
 
@@ -86,6 +91,11 @@ exports.standDown = asyncHandler(async (req, res) => {
   } catch (err) {
     console.warn('[mobilizationController] socket broadcast failed:', err.message);
   }
+
+  // Push — non-blocking; notify in-scope users stand-down is complete
+  sendPushForMobilization(mob).catch((err) => {
+    console.warn('[mobilizationController] push notification failed:', err.message);
+  });
 
   res.json({ success: true, data: { mobilization: mob } });
 });

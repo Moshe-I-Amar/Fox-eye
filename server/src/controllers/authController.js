@@ -71,13 +71,14 @@ const register = asyncHandler(async (req, res) => {
   });
 
   const token = generateToken(user._id);
+  const isMobile = req.headers['x-fox-eye-client'] === 'mobile';
 
   res.cookie('token', token, COOKIE_OPTIONS);
 
   res.status(201).json({
     success: true,
     message: 'User registered successfully',
-    data: { user }
+    data: { user, ...(isMobile && { token }) }
   });
 });
 
@@ -107,13 +108,14 @@ const login = asyncHandler(async (req, res) => {
   }
 
   const token = generateToken(user._id);
+  const isMobile = req.headers['x-fox-eye-client'] === 'mobile';
 
   res.cookie('token', token, COOKIE_OPTIONS);
 
   res.json({
     success: true,
     message: 'Login successful',
-    data: { user }
+    data: { user, ...(isMobile && { token }) }
   });
 });
 

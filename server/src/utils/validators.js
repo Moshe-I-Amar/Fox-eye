@@ -228,9 +228,11 @@ const validateFieldEventCreate = [
     .isIn(FIELD_EVENT_TYPES)
     .withMessage(`eventType must be one of: ${FIELD_EVENT_TYPES.join(', ')}`),
   body('coordinates')
+    .optional()
     .isArray({ min: 2, max: 2 })
     .withMessage('coordinates must be [longitude, latitude]'),
   body('coordinates.*')
+    .optional()
     .isFloat()
     .withMessage('coordinates must be numbers'),
   handleValidationErrors

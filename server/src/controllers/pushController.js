@@ -50,4 +50,31 @@ const unsubscribe = asyncHandler(async (req, res) => {
   res.json({ success: true, data: { unsubscribed: true } });
 });
 
-module.exports = { getVapidPublicKey, subscribe, unsubscribe };
+// POST /api/push/subscribe/mobile  (auth required — Expo Go clients)
+const subscribeMobile = asyncHandler(async (req, res) => {
+  const { expoToken } = req.body;
+  if (!expoToken || typeof expoToken !== 'string') {
+    throw new AppError('VALIDATION_ERROR', 'expoToken is required', 400);
+  }
+
+  const user = req.userDoc;
+
+  await PushSubscription.findOneAndUpdate(
+    { expoToken },
+    {
+      userId:    user._id,
+      platform:  'expo',
+      expoToken,
+      role:      user.role,
+      unitId:    user.unitId    || null,
+      companyId: user.companyId || null,
+      teamId:    user.teamId    || null,
+      squadId:   user.squadId   || null,
+    },
+    { upsert: true, new: true }
+  );
+
+  res.json({ success: true, data: { subscribed: true } });
+});
+
+module.exports = { getVapidPublicKey, subscribe, unsubscribe, subscribeMobile };

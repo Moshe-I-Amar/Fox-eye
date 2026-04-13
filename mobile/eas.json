@@ -1,0 +1,28 @@
+{
+  "cli": {
+    "version": ">= 7.0.0"
+  },
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://fox-eye.onrender.com",
+        "EXPO_PUBLIC_SOCKET_URL": "https://fox-eye.onrender.com",
+        "EXPO_PUBLIC_CLIENT_URL": "https://fox-eye.vercel.app"
+      }
+    },
+    "production": {
+      "channel": "production",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://fox-eye.onrender.com",
+        "EXPO_PUBLIC_SOCKET_URL": "https://fox-eye.onrender.com",
+        "EXPO_PUBLIC_CLIENT_URL": "https://fox-eye.vercel.app"
+      }
+    }
+  },
+  "submit": {}
+}
