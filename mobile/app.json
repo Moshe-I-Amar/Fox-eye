@@ -1,0 +1,62 @@
+{
+  "expo": {
+    "name": "Fox-Eye",
+    "slug": "fox-eye-mobile",
+    "owner": "moshefoxeye",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0a0a0a",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "scheme": "foxeye",
+    "android": {
+      "package": "com.moshefoxeye.foxeye",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0a"
+      },
+      "permissions": [
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.moshefoxeye.foxeye",
+      "supportsTablet": false
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Fox-Eye needs your location for live field tracking.",
+          "locationWhenInUsePermission": "Fox-Eye needs your location for live field tracking."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#C7A76C"
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "extra": {
+      "eas": {
+        "projectId": "ff96c6d3-79e2-42ee-b97b-ab3bce7c3549"
+      },
+      "router": {}
+    },
+    "runtimeVersion": "54.0.0",
+    "updates": {
+      "url": "https://u.expo.dev/ff96c6d3-79e2-42ee-b97b-ab3bce7c3549"
+    }
+  }
+}

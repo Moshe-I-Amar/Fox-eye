@@ -1,3 +1,4 @@
+const https = require('https');
 const webpush = require('web-push');
 const PushSubscription = require('../models/PushSubscription');
 
@@ -23,12 +24,86 @@ const initVapid = () => {
 };
 
 /**
+ * POST JSON to the Expo Push API. Returns the parsed response body.
+ */
+const expoPost = (body) =>
+  new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = https.request(
+      {
+        hostname: 'exp.host',
+        path: '/--/api/v2/push/send',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(data),
+          Accept: 'application/json',
+          'Accept-Encoding': 'gzip, deflate',
+        },
+      },
+      (res) => {
+        let raw = '';
+        res.on('data', (chunk) => { raw += chunk; });
+        res.on('end', () => {
+          try { resolve(JSON.parse(raw)); } catch { resolve({}); }
+        });
+      }
+    );
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+
+/**
+ * Send Expo push notifications to a set of expo-platform subscriptions.
+ * Prunes DeviceNotRegistered tokens automatically.
+ */
+const sendExpoNotifications = async (subscriptions, { title, body, data = {}, priority = 'high' }) => {
+  if (!subscriptions.length) return;
+
+  // Expo limits 100 messages per request
+  const BATCH_SIZE = 100;
+  const expiredTokens = [];
+
+  for (let i = 0; i < subscriptions.length; i += BATCH_SIZE) {
+    const batch = subscriptions.slice(i, i + BATCH_SIZE);
+    const messages = batch.map((sub) => ({
+      to:       sub.expoToken,
+      title,
+      body,
+      data,
+      priority,
+      sound:    'default',
+    }));
+
+    let response;
+    try {
+      response = await expoPost(messages);
+    } catch (err) {
+      console.warn('[pushService] Expo API request failed:', err.message);
+      continue;
+    }
+
+    // response.data is an array of tickets parallel to messages
+    const tickets = response?.data || [];
+    tickets.forEach((ticket, idx) => {
+      if (ticket.status === 'error' && ticket.details?.error === 'DeviceNotRegistered') {
+        expiredTokens.push(batch[idx].expoToken);
+      }
+    });
+  }
+
+  if (expiredTokens.length) {
+    await PushSubscription.deleteMany({ expoToken: { $in: expiredTokens } });
+  }
+};
+
+/**
  * Send a Web Push notification to all subscribed users who are in scope for
  * the given field event (same hierarchy logic as _emitToHierarchyScope).
+ * Also fans out to Expo (mobile) subscribers in the same scope.
  */
 const sendPushForFieldEvent = async (event) => {
-  if (!initVapid()) return;
-
   const { eventType, senderId, unitId, companyId, teamId, squadId } = event;
 
   const orClauses = [{ role: 'admin' }];
@@ -41,51 +116,66 @@ const sendPushForFieldEvent = async (event) => {
   const subscriptions = await PushSubscription.find({ $or: orClauses }).lean();
   if (!subscriptions.length) return;
 
-  const payload = JSON.stringify({
-    title: EVENT_LABELS[eventType] || 'Field Event',
-    body:  'Tap to open Fox-Eye Field',
-    eventId:   String(event._id),
-    eventType,
-  });
+  const webSubs  = subscriptions.filter((s) => s.platform !== 'expo');
+  const expoSubs = subscriptions.filter((s) => s.platform === 'expo');
 
-  const options = { urgency: eventType === 'LINK_UP' ? 'normal' : 'high' };
+  const notifTitle = EVENT_LABELS[eventType] || 'Field Event';
+  const notifBody  = 'Tap to open Fox-Eye Field';
+  const urgency    = eventType === 'LINK_UP' ? 'normal' : 'high';
 
-  const results = await Promise.allSettled(
-    subscriptions.map((sub) =>
-      webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, payload, options)
-    )
-  );
+  const tasks = [];
 
-  // Prune expired / invalid subscriptions (410 Gone, 404 Not Found)
-  const expiredEndpoints = [];
-  results.forEach((result, i) => {
-    if (result.status === 'rejected') {
-      const code = result.reason?.statusCode;
-      if (code === 404 || code === 410) {
-        expiredEndpoints.push(subscriptions[i].endpoint);
+  // VAPID path (web)
+  if (webSubs.length && initVapid()) {
+    const payload = JSON.stringify({
+      title: notifTitle,
+      body:  notifBody,
+      eventId:   String(event._id),
+      eventType,
+    });
+
+    const vapidTask = Promise.allSettled(
+      webSubs.map((sub) =>
+        webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, payload, { urgency })
+      )
+    ).then((results) => {
+      const expiredEndpoints = [];
+      results.forEach((result, i) => {
+        if (result.status === 'rejected') {
+          const code = result.reason?.statusCode;
+          if (code === 404 || code === 410) expiredEndpoints.push(webSubs[i].endpoint);
+        }
+      });
+      if (expiredEndpoints.length) {
+        return PushSubscription.deleteMany({ endpoint: { $in: expiredEndpoints } });
       }
-    }
-  });
+    });
 
-  if (expiredEndpoints.length) {
-    await PushSubscription.deleteMany({ endpoint: { $in: expiredEndpoints } });
+    tasks.push(vapidTask);
   }
+
+  // Expo path (mobile)
+  if (expoSubs.length) {
+    tasks.push(
+      sendExpoNotifications(expoSubs, {
+        title:    notifTitle,
+        body:     notifBody,
+        data:     { eventId: String(event._id), eventType },
+        priority: urgency === 'high' ? 'high' : 'normal',
+      })
+    );
+  }
+
+  await Promise.allSettled(tasks);
 };
 
 /**
- * Send a high-urgency Web Push notification to all users within the
- * mobilization's targetScope.
- *
- * Scope matching mirrors _isInMobilizationScope in socketService:
- *   - Admins always receive
- *   - unitId must match; companyId and teamId narrow the target when set
+ * Send a high-urgency push notification to all users within the
+ * mobilization's targetScope. Fans out to both web (VAPID) and mobile (Expo).
  */
 const sendPushForMobilization = async (mob) => {
-  if (!initVapid()) return;
-
   const { targetScope, incidentDescription } = mob;
 
-  // Build scope filter: match subscriptions within the target hierarchy
   const scopeFilter = { unitId: targetScope.unitId };
   if (targetScope.companyId) scopeFilter.companyId = targetScope.companyId;
   if (targetScope.teamId)    scopeFilter.teamId    = targetScope.teamId;
@@ -96,34 +186,60 @@ const sendPushForMobilization = async (mob) => {
 
   if (!subscriptions.length) return;
 
-  const payload = JSON.stringify({
-    title: '⚠ MOBILIZATION ORDER',
-    body: incidentDescription || 'Immediate mobilization — report to rally point',
-    mobilizationId: String(mob._id),
-    type: 'MOBILIZATION'
-  });
+  const webSubs  = subscriptions.filter((s) => s.platform !== 'expo');
+  const expoSubs = subscriptions.filter((s) => s.platform === 'expo');
 
-  const results = await Promise.allSettled(
-    subscriptions.map((sub) =>
-      webpush.sendNotification(
-        { endpoint: sub.endpoint, keys: sub.keys },
-        payload,
-        { urgency: 'high' }
+  const notifTitle = '⚠ MOBILIZATION ORDER';
+  const notifBody  = incidentDescription || 'Immediate mobilization — report to rally point';
+
+  const tasks = [];
+
+  // VAPID path (web)
+  if (webSubs.length && initVapid()) {
+    const payload = JSON.stringify({
+      title:          notifTitle,
+      body:           notifBody,
+      mobilizationId: String(mob._id),
+      type:           'MOBILIZATION',
+    });
+
+    const vapidTask = Promise.allSettled(
+      webSubs.map((sub) =>
+        webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: sub.keys },
+          payload,
+          { urgency: 'high' }
+        )
       )
-    )
-  );
+    ).then((results) => {
+      const expiredEndpoints = [];
+      results.forEach((result, i) => {
+        if (result.status === 'rejected') {
+          const code = result.reason?.statusCode;
+          if (code === 404 || code === 410) expiredEndpoints.push(webSubs[i].endpoint);
+        }
+      });
+      if (expiredEndpoints.length) {
+        return PushSubscription.deleteMany({ endpoint: { $in: expiredEndpoints } });
+      }
+    });
 
-  const expiredEndpoints = [];
-  results.forEach((result, i) => {
-    if (result.status === 'rejected') {
-      const code = result.reason?.statusCode;
-      if (code === 404 || code === 410) expiredEndpoints.push(subscriptions[i].endpoint);
-    }
-  });
-
-  if (expiredEndpoints.length) {
-    await PushSubscription.deleteMany({ endpoint: { $in: expiredEndpoints } });
+    tasks.push(vapidTask);
   }
+
+  // Expo path (mobile)
+  if (expoSubs.length) {
+    tasks.push(
+      sendExpoNotifications(expoSubs, {
+        title:    notifTitle,
+        body:     notifBody,
+        data:     { mobilizationId: String(mob._id), type: 'MOBILIZATION' },
+        priority: 'high',
+      })
+    );
+  }
+
+  await Promise.allSettled(tasks);
 };
 
 module.exports = { sendPushForFieldEvent, sendPushForMobilization };
