@@ -97,10 +97,6 @@ const filterByScope = (items, scope) => {
 
 const filterUsersByScope = (users, scope) => filterByScope(users, scope);
 
-const filterAssetsByScope = (assets, scope) => filterByScope(assets, scope);
-
-const filterEventsByScope = (events, scope) => filterByScope(events, scope);
-
 const buildScopeQuery = (scope) => {
   if (scope?.all) {
     return {};
@@ -134,7 +130,5 @@ const buildScopeQuery = (scope) => {
 
 module.exports = {
   filterUsersByScope,
-  filterAssetsByScope,
-  filterEventsByScope,
   buildScopeQuery
 };

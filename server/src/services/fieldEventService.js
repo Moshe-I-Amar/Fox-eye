@@ -96,8 +96,6 @@ const resolveFieldEvent = async ({ id, scopeQuery, actorId }) => {
 
 module.exports = {
   validateAntiSpoof,
-  haversineMeters,
-  MAX_VELOCITY_MPS,
   MAX_TIMESTAMP_SKEW_MS,
   createFieldEvent,
   listFieldEvents,
